@@ -14,14 +14,15 @@ cd youtube-outliers-claude-code
 python3 install.py
 ```
 
-The installer copies the skill into `~/.claude/skills/` and then asks a few questions:
+The installer copies the skill into `~/.claude/skills/` and walks you through 5 short steps (about 2 minutes):
 
-1. Your ScrapeCreators API key (typed into a hidden prompt, stored privately at `~/.config/youtube-outliers/.env`)
-2. A brand name, for example `my-channel`
-3. Competitor YouTube channels, separated by commas, for example `@nateherk, @nicksaraev`
-4. Whether to set up Notion (optional)
+1. **Connect ScrapeCreators:** paste your API key. Nothing appears while you paste, which keeps it private. It is saved only on your computer, at `~/.config/youtube-outliers/.env`.
+2. **Pick a nickname** for your channel, for example `my-channel`.
+3. **Add competitors:** paste YouTube handles or links separated by commas, for example `@nateherk, @nicksaraev`.
+4. **Describe your channel:** your channel link (if you have one) and a sentence or two about the videos you make now and want to make next. Both are skippable.
+5. **Notion (optional):** most people skip this. Reports are always saved on your computer.
 
-Then describe your channel in the `profile.md` file it prints, and in Claude Code run:
+When it says "You're all set!", open Claude Code and type:
 
 ```text
 /youtube-outliers my-channel

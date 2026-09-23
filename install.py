@@ -49,18 +49,18 @@ def main(argv=None):
     except Exception as exc:
         print(f"Install failed: {exc}", file=sys.stderr)
         return 1
-    print(f"Installed: {target}")
+    print(f"Installed the skill in {target}")
     if backup:
-        print(f"Previous version backed up: {backup}")
+        print(f"Your previous version was saved in {backup}")
     setup_cmd = f"python3 \"{target / 'scripts' / 'setup.py'}\""
     if args.no_setup:
-        print(f"\nRun the private setup wizard in your own terminal when ready:\n{setup_cmd}")
+        print(f"\nWhen you're ready, run this to finish setup:\n{setup_cmd}")
         return 0
-    print("\nStarting the private setup wizard...\n")
+    print("Now let's set it up.\n")
     if run_setup(target) != 0:
-        print(f"\nSetup did not finish. Run it again any time:\n{setup_cmd}", file=sys.stderr)
+        print(f"\nSetup didn't finish. You can pick up where you left off with:\n{setup_cmd}", file=sys.stderr)
         return 1
-    print("\nRestart Claude Code if the skill doesn't appear yet.")
+    print("If /youtube-outliers doesn't show up in Claude Code, restart Claude Code.")
     return 0
 
 

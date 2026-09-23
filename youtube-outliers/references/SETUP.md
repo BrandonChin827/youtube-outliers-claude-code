@@ -26,7 +26,7 @@ The setup wizard creates:
 
 The wizard asks for competitor handles (comma-separated; `@handle`, `handle`, or a `youtube.com/@handle` link all work) and adds any that are not already in the table. You can also edit the table directly, one handle per row. Empty tables are rejected.
 
-Fill the profile with the channel's actual audience, pillars, positioning, and title style.
+The wizard also asks for your channel (optional) and a short description of the videos you make now and want to make going forward, and saves them in the profile. You can edit the profile any time.
 
 ## Notion, optional
 
@@ -47,4 +47,4 @@ The check reports whether secrets and input files exist but never prints secret 
 
 ## Move or customize content storage
 
-Rerun setup and choose a different Content folder, or set `CONTENT_HOME` in the process environment. The environment variable takes priority over the private config file.
+Reports are saved under `~/Documents/Content` by default. To use a different folder, set `CONTENT_HOME` in your environment before running setup; setup remembers it in the private config file. The environment variable takes priority over the private config file.
