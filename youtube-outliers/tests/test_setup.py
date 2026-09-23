@@ -13,6 +13,7 @@ SETUP_PATH = Path(__file__).resolve().parents[1] / "scripts" / "setup.py"
 SPEC = importlib.util.spec_from_file_location("youtube_outliers_setup", SETUP_PATH)
 setup = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(setup)
+from scripts.lib import tracked as tracked_lib  # noqa: E402
 
 
 class SetupTests(unittest.TestCase):
@@ -56,6 +57,33 @@ class SetupTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertNotIn(secret, output.getvalue())
             self.assertIn("configured", output.getvalue())
+
+    def test_add_channels_appends_new_handles_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, tracked, _ = setup.create_brand(Path(d), "my-channel")
+            tracked.write_text(tracked.read_text() + "| @existing | AI | keep me |\n")
+            added = setup.add_channels(tracked, "@Existing, newone, https://www.youtube.com/@third, @newone")
+            self.assertEqual(added, ["@newone", "@third"])
+            text = tracked.read_text()
+            self.assertIn("| @existing | AI | keep me |", text)
+            self.assertEqual(text.count("@newone"), 1)
+            handles = [row["handle"] for row in tracked_lib.load_tracked(tracked)]
+            self.assertEqual(handles, ["@existing", "@newone", "@third"])
+
+    def test_add_channels_rejects_unsafe_handles(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, tracked, _ = setup.create_brand(Path(d), "my-channel")
+            before = tracked.read_text()
+            with self.assertRaises(ValueError):
+                setup.add_channels(tracked, "good, bad|handle")
+            self.assertEqual(tracked.read_text(), before)
+
+    def test_add_channels_blank_input_changes_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, tracked, _ = setup.create_brand(Path(d), "my-channel")
+            before = tracked.read_text()
+            self.assertEqual(setup.add_channels(tracked, "  "), [])
+            self.assertEqual(tracked.read_text(), before)
 
     def test_validate_brand_rejects_paths(self):
         for value in ("../secret", "My Channel", "/tmp/x", "a_b"):
