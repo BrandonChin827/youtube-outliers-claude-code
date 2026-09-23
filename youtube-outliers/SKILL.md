@@ -78,7 +78,7 @@ Ask: "Who are 5 to 30 creators in your space you'd like to keep an eye on? Paste
   python3 "$SKILL_DIR/scripts/setup.py" verify-handles "@a, @b"
   ```
 
-  For any with `"exists": false`, say which ones you couldn't find and ask for the right link.
+  Links like `youtube.com/channel/UC…` come back as their real @handle; use the returned `handle` when adding. For any with `"exists": false`, say which ones you couldn't find and ask for the channel's @handle link.
 - **They ask for help:** use WebSearch to find YouTube creators who make long-form videos for the same audience as their "about" answer. Collect 15 to 40 candidate handles, run `verify-handles` on them, and keep only `"exists": true`. Show 10 to 20 as a numbered list: the channel name, the handle, and a one-line reason. Never include the user's own channel. Ask which to track (for example "1, 2, 5" or "all").
 
 Add only what the user approved:
