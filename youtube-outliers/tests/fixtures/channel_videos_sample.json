@@ -1,0 +1,24 @@
+{
+  "videos": [
+    {"id": "vid_normal", "title": "Normal video", "url": "https://www.youtube.com/watch?v=vid_normal",
+     "publishDate": "2026-08-01T10:00:00-07:00", "publishedTime": "2026-09-21T00:38:41.981Z",
+     "viewCountInt": 30000, "likeCountInt": 900, "commentCountInt": 80, "lengthSeconds": 812,
+     "thumbnail": "https://i.ytimg.com/vi/vid_normal/hqdefault.jpg", "badges": []},
+    {"id": "vid_short", "title": "A short", "url": "https://www.youtube.com/watch?v=vid_short",
+     "publishDate": "2026-08-02T10:00:00-07:00", "publishedTime": "2026-09-21T00:38:41.981Z",
+     "viewCountInt": 500000, "likeCountInt": 0, "commentCountInt": 0, "lengthSeconds": 45,
+     "thumbnail": "https://i.ytimg.com/vi/vid_short/hqdefault.jpg", "badges": []},
+    {"id": "vid_stream", "title": "5 hour build stream", "url": "https://www.youtube.com/watch?v=vid_stream",
+     "publishDate": "2026-08-03T10:00:00-07:00", "publishedTime": "2026-09-21T00:38:41.981Z",
+     "viewCountInt": 2000, "likeCountInt": 0, "commentCountInt": 0, "lengthSeconds": 18140,
+     "thumbnail": "https://i.ytimg.com/vi/vid_stream/hqdefault.jpg", "badges": ["Streamed"]},
+    {"id": "vid_recent", "title": "Recent video", "url": "https://www.youtube.com/watch?v=vid_recent",
+     "publishDate": "2026-09-18T05:00:25-07:00", "publishedTime": "2026-09-21T00:38:41.981Z",
+     "viewCountInt": 148000, "likeCountInt": 5000, "commentCountInt": 400, "lengthSeconds": 900,
+     "thumbnail": "https://i.ytimg.com/vi/vid_recent/hqdefault.jpg", "badges": []}
+  ],
+  "shorts": [],
+  "lives": [],
+  "continuationToken": "abc",
+  "credits_charged": 1
+}
