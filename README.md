@@ -1,100 +1,87 @@
 # YouTube Outliers for Claude Code
 
-A shareable Claude Code skill for weekly YouTube competitor research. It uses ScrapeCreators to score recent long-form uploads against each channel's own baseline, groups breakouts by topic, analyzes the top five, and creates Markdown, CSV, and optional Notion reports.
+Find the videos in your niche that are doing unusually well this week, and turn them into video ideas for your channel.
 
-## Quick start
+Each week it checks the creators you follow. It compares every new long-form video with that creator's normal views, groups the breakouts by topic, and breaks down the top five: the hook, why it worked, and three title ideas written for your channel. Reports are saved on your computer, and can also go to Notion.
 
-You need Claude Code, Python 3.9 or newer, and a [ScrapeCreators](https://app.scrapecreators.com/) account. The account is free to create; each scan uses a few credits.
+## Get started
 
-**1. Get your ScrapeCreators API key.** Sign up at <https://app.scrapecreators.com/> and copy the key from the dashboard. No account yet? You can skip this step during setup and add the key later.
+You need [Claude Code](https://claude.com/claude-code) and a [ScrapeCreators](https://app.scrapecreators.com/) account (it looks up the YouTube data).
 
-**2. Open Terminal and paste this one line:**
+**1. Paste this into Claude Code:**
+
+```text
+Install this skill: https://github.com/BrandonChin827/youtube-outliers-claude-code
+```
+
+**2. Type `/youtube-outliers`.** Claude sets it up with you right there in chat, in about 2 minutes:
+
+1. **Connect ScrapeCreators.** A small window pops up for your API key, so the key never goes into the chat.
+2. **About you.** Your channel and the kind of videos you make.
+3. **Creators to watch.** Paste some, or say "help me find some" and pick from Claude's suggestions.
+4. **Notion (optional).** If Notion is connected to Claude, pick the page reports should go under.
+
+**3. Say yes to your first report.** Claude tells you how many credits it uses before it spends any.
+
+After that, type `/youtube-outliers` whenever you want this week's report. To change who you follow, just ask ("add @somecreator", "stop tracking @other").
+
+If `/youtube-outliers` doesn't show up after installing, restart Claude Code.
+
+## Updating
+
+Paste this into Claude Code:
+
+```text
+Update my YouTube Outliers skill from https://github.com/BrandonChin827/youtube-outliers-claude-code
+```
+
+Your key, creators, and reports are kept. The old version is saved in `~/.claude/skill-backups/`.
+
+## Do I need Notion?
+
+No. Every report is saved on your computer (Markdown and CSV, in `~/Documents/Content/<your-channel>/research/youtube-outliers/`).
+
+If you'd like reports in Notion too, connect Notion in Claude's settings under Connectors, then ask Claude to add it. There's nothing else to set up.
+
+## What it costs
+
+| Action | ScrapeCreators credits |
+|---|---|
+| Checking your key during setup | at most 1, once |
+| Weekly scan | about 1 per creator you follow |
+| Top-five breakdowns | 5 (one transcript each) |
+| Re-formatting or re-publishing a report | 0 |
+
+Claude always tells you the cost and waits for your OK before a scan.
+
+## Privacy and your API key
+
+- Your key is typed into a pop-up window (or a hidden terminal prompt on Windows and Linux), not into the chat.
+- It's saved only on your computer in `~/.config/youtube-outliers/.env`, readable only by you.
+- Don't paste it into chat, GitHub, screenshots, or support messages. If it's ever exposed, create a new one in the ScrapeCreators dashboard and run `/youtube-outliers` again.
+
+## For Claude: installing for a user
+
+When a user asks you to install or update this skill from this repository:
+
+1. Clone the repo to a temporary folder.
+2. Run the offline tests: `python3 -m unittest test_install -q`, then `python3 -m unittest discover -s youtube-outliers/tests -q`. Stop and report if anything fails.
+3. Run `python3 install.py`. It only copies files; it asks no questions.
+4. Tell the user it's installed and to type `/youtube-outliers` to set it up in chat (restart Claude Code if the command doesn't appear yet).
+
+Never ask for the ScrapeCreators key in chat. The skill collects it through `setup.py key`.
+
+## Manual install
 
 ```bash
 git clone https://github.com/BrandonChin827/youtube-outliers-claude-code.git && cd youtube-outliers-claude-code && python3 install.py
 ```
 
-On a Mac, open Terminal with Cmd+Space, type "Terminal", then press Enter. If your Mac asks to install "command line developer tools", click Install, wait for it to finish, then paste the line again.
-
-**3. Answer 5 short questions** (about 2 minutes):
-
-1. **Connect ScrapeCreators:** paste your API key. Nothing appears while you paste, which keeps it private. Setup checks the key right away and saves it only on your computer.
-2. **Pick a nickname** for your channel, like `my-channel`. Typing "My Channel" works too.
-3. **Add competitors:** paste YouTube handles or channel links separated by commas, like `@nateherk, @nicksaraev`.
-4. **Describe your channel:** your channel link and a sentence about the videos you make. Both are optional.
-5. **Notion:** optional. Most people skip it. Reports are always saved on your computer.
-
-**4. Run your first report.** Open Claude Code and type:
-
-```text
-/youtube-outliers my-channel
-```
-
-Claude tells you how many credits the scan will use and waits for your OK. If `/youtube-outliers` doesn't show up, restart Claude Code.
-
-### Or let Claude install it
-
-Paste this into Claude Code:
-
-```text
-Install the Claude Code skill at https://github.com/BrandonChin827/youtube-outliers-claude-code.
-Clone it to a temporary folder, run its offline tests, then run `python3 install.py --no-setup`.
-Then tell me to run the setup wizard myself in a terminal. Never ask for my API key in chat.
-```
-
-### Install from a downloaded ZIP
-
-Unzip the folder, open a terminal inside it, and run `python3 install.py`.
-
-### Updating
-
-Run `python3 install.py` again from a fresh copy. The old version moves to `~/.claude/skill-backups/`, and your key, brand files, and reports are kept. Use `--no-setup` to skip the questions.
-
-## Safe API-key setup
-
-- Create an account: <https://app.scrapecreators.com/>
-- Copy the API key from the dashboard.
-- Paste it only into `scripts/setup.py` when its hidden prompt is active.
-- Do not paste it into Claude chat, `CLAUDE.md`, `SKILL.md`, GitHub, screenshots, or support messages.
-- Rotate the key in ScrapeCreators immediately if it is exposed.
-
-## Do I need Notion?
-
-No. Every report is saved on your computer as Markdown and CSV in `~/Documents/Content/<nickname>/research/youtube-outliers/`.
-
-Notion is only for people who also want each report as a Notion page. You also don't need the Notion MCP connector in Claude. The skill talks to Notion directly with its own integration secret, which you set up once in the wizard.
-
-## Optional Notion publishing
-
-The setup wizard can store a Notion integration token using the same hidden-input flow. Create the integration at <https://www.notion.so/profile/integrations>, copy its token, share the intended parent page with that integration, and enter the parent page ID when prompted.
-
-Without Notion, the workflow still creates complete Markdown and CSV reports.
-
-Claude renders locally with `--no-notion` first and asks for approval before the first live Notion publish.
-
-## Cost behavior
-
-- Setup key check: at most one credit, once, when you paste the key.
-- Scan: about one ScrapeCreators credit per tracked channel.
-- Transcript analysis: one credit for each of the top five videos.
-- Republish or formatting revisions: no ScrapeCreators credits.
-
-Claude must tell the user before a paid scan and must not rerun the scan just to change formatting.
-
-## Verify installation
-
-```bash
-python3 ~/.claude/skills/youtube-outliers/scripts/setup.py --check --brand my-channel
-cd ~/.claude/skills/youtube-outliers
-python3 -m unittest discover -s tests -v
-```
-
-The test suite uses fixtures and does not call live APIs.
+Then type `/youtube-outliers` in Claude Code.
 
 ## Files
 
-- `youtube-outliers/SKILL.md`: Claude Code workflow and output contract.
-- `youtube-outliers/scripts/`: zero-dependency Python implementation.
-- `youtube-outliers/references/SETUP.md`: detailed onboarding.
-- `youtube-outliers/references/SECURITY.md`: credential rules.
-- `youtube-outliers/templates/`: starter brand files.
+- `youtube-outliers/SKILL.md`: what Claude does: chat setup, the weekly workflow, and the report format.
+- `youtube-outliers/scripts/`: zero-dependency Python (scoring, reports, setup helpers).
+- `youtube-outliers/references/`: setup and security details.
+- `youtube-outliers/tests/`: offline tests; no live API calls.
