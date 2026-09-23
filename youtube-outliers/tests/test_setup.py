@@ -222,6 +222,59 @@ class VerifyHandlesTests(unittest.TestCase):
         ])
 
 
+CHANNEL_PAGES = {
+    "channel/UC-PQKtrPhk3JXyjUleBLgQQ": '"canonicalBaseUrl":"/@SomeoneElse","vanityChannelUrl":"http://www.youtube.com/@AIEdgeHQ"',
+    "channel/UCZUZ5l2tyq1BrxlnKDR6CSg": '"ownerUrls":["http://www.youtube.com/@sooweigoh"]',
+    "c/OldName": '"vanityChannelUrl":"http://www.youtube.com/@newname"',
+    "channel/UCnohandle0000000000000": "<html>no handle here</html>",
+}
+
+
+def page_opener(req, timeout):
+    for path, body in CHANNEL_PAGES.items():
+        if req.full_url.endswith(path):
+            return io.BytesIO(body.encode())
+    if "/@" in req.full_url:
+        return io.BytesIO(b'<meta property="og:title" content="Found">')
+    raise urllib.error.HTTPError(req.full_url, 404, "nf", {}, None)
+
+
+class ChannelLinkTests(unittest.TestCase):
+    """Regression: youtube.com/channel/UC... links used to become the handle "@channel"."""
+
+    def test_channel_id_links_resolve_to_their_handle(self):
+        handles = setup.parse_handles(
+            "https://www.youtube.com/channel/UC-PQKtrPhk3JXyjUleBLgQQ, "
+            "youtube.com/channel/UCZUZ5l2tyq1BrxlnKDR6CSg/videos, https://www.youtube.com/c/OldName",
+            opener=page_opener)
+        self.assertEqual(handles, ["@AIEdgeHQ", "@sooweigoh", "@newname"])
+
+    def test_plain_handles_make_no_network_calls(self):
+        def no_network(req, timeout):
+            raise AssertionError("network used for a plain handle")
+        self.assertEqual(setup.parse_handles("@a, youtube.com/@b/videos, c", opener=no_network), ["@a", "@b", "@c"])
+
+    def test_unresolvable_link_gives_a_clear_error(self):
+        with self.assertRaises(ValueError) as ctx:
+            setup.parse_handles("youtube.com/channel/UCnohandle0000000000000", opener=page_opener)
+        self.assertIn("@handle", str(ctx.exception))
+        self.assertNotIn("@channel", str(ctx.exception))
+
+    def test_verify_handles_resolves_links_and_reports_unresolvable(self):
+        results = setup.verify_handles(
+            "youtube.com/channel/UC-PQKtrPhk3JXyjUleBLgQQ, youtube.com/channel/UCnohandle0000000000000",
+            opener=page_opener)
+        self.assertEqual(results[0], {"handle": "@AIEdgeHQ", "exists": True, "name": "Found"})
+        self.assertEqual(results[1]["exists"], False)
+        self.assertIn("UCnohandle", results[1]["handle"])
+
+    def test_brand_add_accepts_channel_links(self):
+        with sandbox(), mock.patch.object(setup.urllib.request, "urlopen", page_opener):
+            info = json.loads(run(["brand", "--channel", "@me", "--add",
+                                   "https://www.youtube.com/channel/UC-PQKtrPhk3JXyjUleBLgQQ"])[1])
+        self.assertEqual(info["handles"], ["@AIEdgeHQ"])
+
+
 class StatusTests(unittest.TestCase):
     def test_next_step_walks_through_setup(self):
         with sandbox():

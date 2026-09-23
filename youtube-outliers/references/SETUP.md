@@ -12,9 +12,9 @@ All commands live in `scripts/setup.py`, make no ScrapeCreators calls unless not
 | `key` | macOS: opens a pop-up with a hidden field. Checks the key once with ScrapeCreators' credit-balance endpoint (at most 1 credit) and saves it. Prints `saved:`, `saved-unverified:`, `rejected:`, `cancelled:`, or `needs-terminal:`. |
 | `key --terminal` | Same, with a hidden terminal prompt instead of a pop-up. Used on Windows and Linux. |
 | `brand --channel C --about A` | Creates the brand. The folder name comes from the channel handle, or `my-channel` when there's no channel. |
-| `brand --name N --add LIST --remove LIST` | Adds or removes tracked creators. Accepts `@handle`, `handle`, or channel links, comma-separated. The user's own channel is never added. |
+| `brand --name N --add LIST --remove LIST` | Adds or removes tracked creators. Accepts `@handle`, `handle`, or channel links, comma-separated. Links without a handle (`youtube.com/channel/UC…`, `/c/…`, `/user/…`) are looked up on YouTube for free. The user's own channel is never added. |
 | `brand --name N --notion-page P` | Saves the Notion parent page (link or ID) to `notion.md`. |
-| `verify-handles LIST` | Checks each handle's YouTube page exists. Free: no ScrapeCreators credits. |
+| `verify-handles LIST` | Checks each handle's YouTube page exists, turning channel-ID links into their @handle first. Free: no ScrapeCreators credits. |
 | `--check --brand B` | Older plain-text check, kept for compatibility. |
 
 ## Files it writes

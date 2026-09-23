@@ -32,6 +32,10 @@ from scripts.lib import env, tracked as tracked_lib  # noqa: E402
 CREDIT_URL = "https://api.scrapecreators.com/v1/account/credit-balance"
 BRAND_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 HANDLE_RE = re.compile(r"^@[A-Za-z0-9._-]{1,100}$")
+# Links that name a channel without its @handle: /channel/UC…, and legacy /c/… and /user/… URLs
+CHANNEL_LINK_RE = re.compile(r"youtube\.com/((?:channel/UC[A-Za-z0-9_-]{10,40})|(?:c|user)/[^/?#\s]+)", re.I)
+# The channel's own handle on its page (other channels' handles appear there too, in featured sections)
+OWN_HANDLE_RE = re.compile(r'"(?:vanityChannelUrl|ownerUrls)":\[?"https?://(?:www\.)?youtube\.com/(@[A-Za-z0-9._-]{1,100})"')
 NOTION_ID_RE = re.compile(r"([0-9a-f]{8})-?([0-9a-f]{4})-?([0-9a-f]{4})-?([0-9a-f]{4})-?([0-9a-f]{12})(?![0-9a-f])", re.I)
 FILL = "[FILL]"
 MAX_TRACKED = 30  # keeps a weekly scan near 35-40 credits (30 channels + 5-10 transcripts)
@@ -174,11 +178,41 @@ def validate_brand(value):
     return value
 
 
-def parse_handles(raw):
+def _youtube_page(path, opener=None):
+    """Fetch a public youtube.com page. Free: no ScrapeCreators credits."""
+    req = urllib.request.Request(f"https://www.youtube.com/{path}",
+                                 headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en"})
+    with (opener or urllib.request.urlopen)(req, timeout=15) as resp:
+        return resp.read(3_000_000).decode("utf-8", "replace")
+
+
+def handle_from_link(path, opener=None):
+    """The @handle for a /channel/, /c/, or /user/ link, or '' when it can't be found."""
+    try:
+        match = OWN_HANDLE_RE.search(_youtube_page(path, opener))
+    except (urllib.error.URLError, OSError, TimeoutError):
+        return ""
+    return match.group(1) if match else ""
+
+
+def parse_handles(raw, opener=None):
+    """Turn pasted handles and links into @handles.
+
+    Channel-ID links (youtube.com/channel/UC…) and old /c/ or /user/ links carry no
+    handle, so they're looked up on YouTube (free). Plain handles never touch the network.
+    """
     handles = []
     for part in raw.replace("\n", ",").split(","):
         part = part.strip().rstrip("/")
         if not part:
+            continue
+        link = CHANNEL_LINK_RE.search(part)
+        if link:
+            handle = handle_from_link(link.group(1), opener)
+            if not handle:
+                raise ValueError(f"couldn't find the @handle for {part}. Open the channel and copy the link "
+                                 f"that has an @ in it (youtube.com/@name)")
+            handles.append(handle)
             continue
         if "youtube.com/" in part:
             part = part.split("youtube.com/", 1)[1].split("/", 1)[0].split("?", 1)[0]
@@ -293,16 +327,18 @@ def cmd_brand(channel=None, about=None, add="", remove="", notion_page="", name=
     return 0
 
 
-def verify_handles(raw, opener=urllib.request.urlopen):
+def verify_handles(raw, opener=None):
     """Check each handle's YouTube page. Returns [{"handle", "exists", "name"}]. Free: no ScrapeCreators credits."""
     results = []
-    for handle in parse_handles(raw):
-        req = urllib.request.Request(f"https://www.youtube.com/{handle}",
-                                     headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en"})
+    for part in [p.strip() for p in raw.replace("\n", ",").split(",") if p.strip()]:
+        try:
+            handle = parse_handles(part, opener)[0]
+        except ValueError:
+            results.append({"handle": part, "exists": False, "name": ""})  # a link we couldn't turn into a handle
+            continue
         entry = {"handle": handle, "exists": None, "name": ""}
         try:
-            with opener(req, timeout=15) as resp:
-                page = resp.read(3_000_000).decode("utf-8", "replace")
+            page = _youtube_page(handle, opener)
             entry["exists"] = True
             match = re.search(r'<meta property="og:title" content="([^"]*)"', page)
             entry["name"] = html.unescape(match.group(1)) if match else ""
