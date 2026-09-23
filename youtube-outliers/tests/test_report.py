@@ -39,9 +39,17 @@ class ReportTests(unittest.TestCase):
         self.assertIn("· seen", line)
         self.assertIn("· adjacent", line)
 
-    def test_fmt_line_rounds_half_day_age_up_to_one(self):
-        line = report.fmt_line(1, {**C, "age_days": 0.5})
-        self.assertIn("· 1d ·", line)
+    def test_fmt_line_shows_under_one_day_as_less_than_one(self):
+        self.assertIn("· <1d ·", report.fmt_line(1, {**C, "age_days": 0.5}))
+        self.assertIn("· 1d ·", report.fmt_line(1, {**C, "age_days": 1.0}))
+
+    def test_fmt_line_early_and_confidence_labels(self):
+        line = report.fmt_line(1, {**C, "score": 6.4, "views": 18000, "age_days": 0.7, "early": True,
+                                   "confidence": "low"})
+        self.assertIn("[6.4x · 18K views · <1d · breakout · early · low confidence]", line)
+        line = report.fmt_line(1, {**C, "score": 3.1, "views": 42000, "age_days": 4.0, "tier": "notable",
+                                   "early": False, "confidence": "high", "adjacent": True})
+        self.assertIn("[3.1x · 42K views · 4d · notable · high confidence · adjacent]", line)
 
     def test_fmt_line_truncates_long_titles(self):
         line = report.fmt_line(1, {**C, "title": "x" * 120})
@@ -66,7 +74,12 @@ class ReportTests(unittest.TestCase):
     def test_write_markdown_zero_results(self):
         with tempfile.TemporaryDirectory() as d:
             md = report.write_markdown(Path(d) / "r.md", "b", "2026-09-21", [], [])
-            self.assertIn("No videos cleared 2.0x", md)
+            self.assertIn("No videos cleared 2.0x in the last 7 days", md)
+
+    def test_write_markdown_window_follows_days(self):
+        with tempfile.TemporaryDirectory() as d:
+            md = report.write_markdown(Path(d) / "r.md", "b", "2026-09-21", [C], [], days=30)
+            self.assertIn("window: last 30 days", md)
 
     def test_generated_markdown_punctuation_has_no_em_dash_but_source_title_is_literal(self):
         with tempfile.TemporaryDirectory() as d:

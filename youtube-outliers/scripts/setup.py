@@ -34,6 +34,8 @@ BRAND_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 HANDLE_RE = re.compile(r"^@[A-Za-z0-9._-]{1,100}$")
 NOTION_ID_RE = re.compile(r"([0-9a-f]{8})-?([0-9a-f]{4})-?([0-9a-f]{4})-?([0-9a-f]{4})-?([0-9a-f]{12})(?![0-9a-f])", re.I)
 FILL = "[FILL]"
+MAX_TRACKED = 30  # keeps a weekly scan near 35-40 credits (30 channels + 5-10 transcripts)
+RECOMMENDED_MIN_TRACKED = 5
 
 PROFILE_TEMPLATE = """# Brand profile
 
@@ -224,19 +226,25 @@ def set_section(profile, title, value):
 
 
 def add_channels(tracked, handles):
-    """Append handles to the tracked table, skipping ones already listed."""
-    seen = {row["handle"].lower() for row in tracked_lib.load_tracked(tracked)}
-    added = []
+    """Append handles to the tracked table, skipping ones already listed.
+
+    Returns (added, over_limit): handles past MAX_TRACKED are not added.
+    """
+    rows = tracked_lib.load_tracked(tracked)
+    seen = {row["handle"].lower() for row in rows}
+    room = MAX_TRACKED - len(rows)
+    added, over_limit = [], []
     for handle in handles:
-        if handle.lower() not in seen:
-            seen.add(handle.lower())
-            added.append(handle)
+        if handle.lower() in seen:
+            continue
+        seen.add(handle.lower())
+        (added if len(added) < room else over_limit).append(handle)
     if added:
         text = tracked.read_text()
         if not text.endswith("\n"):
             text += "\n"
         tracked.write_text(text + "".join(f"| {h} |  |  |\n" for h in added))
-    return added
+    return added, over_limit
 
 
 def remove_channels(tracked, handles):
@@ -275,10 +283,12 @@ def cmd_brand(channel=None, about=None, add="", remove="", notion_page="", name=
         set_section(profile, "My content", about)
     competitors = [h for h in parse_handles(add) if h.lower() != own.lower()] if add else []
     skipped_own = bool(add) and own and any(h.lower() == own.lower() for h in parse_handles(add))
-    added = add_channels(tracked, competitors)
-    removed = remove_channels(tracked, parse_handles(remove)) if remove else 0
+    removed = remove_channels(tracked, parse_handles(remove)) if remove else 0  # first, so a swap fits under the cap
+    added, over_limit = add_channels(tracked, competitors)
     summary = brand_summary(content_home, brand)
-    summary.update({"added": added, "removed": removed, "skipped_own_channel": bool(skipped_own)})
+    summary.update({"added": added, "removed": removed, "skipped_own_channel": bool(skipped_own),
+                    "over_limit": over_limit,
+                    "under_recommended": bool(add or remove) and 0 < summary["tracked"] < RECOMMENDED_MIN_TRACKED})
     print(json.dumps(summary, indent=2))
     return 0
 

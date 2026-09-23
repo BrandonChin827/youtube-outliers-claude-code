@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from scripts import outliers
+from scripts.lib.scoring import expected_share
 
 NOW = datetime(2026, 9, 21, 12, 0, tzinfo=timezone.utc)
 TRACKED = """| Handle | Category | Notes |
@@ -26,12 +27,17 @@ def vid(ch, id_, days_old, views, length=900):
             "length_seconds": length, "thumbnail": "", "is_live": False}
 
 
+def typical(ch, id_, days_old, multiple=1.0):
+    """A video with `multiple` × the views a typical 30K-lifetime video has at that age."""
+    return vid(ch, id_, days_old, round(30000 * expected_share(days_old) * multiple))
+
+
 def fake_fetch(handle, api_key):
-    base = [vid(handle, f"{handle}_b{i}", 20 + i * 10, 30000) for i in range(6)]
+    base = [typical(handle, f"{handle}_b{i}", 20 + i * 10) for i in range(6)]
     if handle == "@good":
-        return base + [vid(handle, "good_hit", 3, 24000), vid(handle, "good_ok", 4, 10000)]
+        return base + [typical(handle, "good_hit", 3, 8), typical(handle, "good_ok", 4, 2.5)]
     if handle == "@adj":
-        return base + [vid(handle, "adj_hit", 2, 8000)]
+        return base + [typical(handle, "adj_hit", 2, 4)]
     if handle == "@thin":
         return base[:2] + [vid(handle, "thin_hit", 2, 99999)]
     return []
@@ -74,6 +80,92 @@ class CliTests(unittest.TestCase):
         outliers.run("brandonbuilds", NOW, "key", fetch_fn=fake_fetch)
         out = outliers.run("brandonbuilds", NOW + timedelta(days=1), "key", fetch_fn=fake_fetch)
         self.assertTrue(out["candidates"][0]["seen"])
+
+    def test_days_out_of_range_exits_before_fetching(self):
+        with mock.patch("scripts.outliers.load_api_key") as key, \
+                mock.patch("scripts.outliers.fetch.fetch_channel_videos") as fetch_videos:
+            self.assertEqual(outliers.main(["run", "brandonbuilds", "--days", "31"]), 1)
+            self.assertEqual(outliers.main(["run", "brandonbuilds", "--days", "3"]), 1)
+        key.assert_not_called()
+        fetch_videos.assert_not_called()
+
+    def test_longer_window_reaches_older_videos(self):
+        def fetch_older(handle, api_key):
+            base = [typical(handle, f"{handle}_b{i}", 35 + i * 10) for i in range(6)]
+            return base + [typical(handle, f"{handle}_wk3", 20, 6)] if handle == "@good" else []
+        week = outliers.run("brandonbuilds", NOW, "key", fetch_fn=fetch_older)
+        month = outliers.run("brandonbuilds", NOW, "key", days=30, fetch_fn=fetch_older)
+        self.assertEqual((week["days"], month["days"]), (7, 30))
+        self.assertEqual(week["candidates"], [])
+        self.assertEqual([c["id"] for c in month["candidates"]], ["@good_wk3"])
+        md = Path(month["paths"]["md"]).read_text()
+        self.assertIn("window: last 30 days", md)
+
+    def test_collect_without_confirmation_fetches_nothing(self):
+        buf = io.StringIO()
+        with mock.patch("scripts.outliers.load_api_key") as key, \
+                mock.patch("scripts.outliers.fetch.fetch_channel_videos") as fetch_videos, \
+                contextlib.redirect_stdout(buf):
+            self.assertEqual(outliers.main(["collect", "brandonbuilds"]), 0)
+        key.assert_not_called()
+        fetch_videos.assert_not_called()
+        self.assertIn("about 4 ScrapeCreators credits", buf.getvalue())
+        self.assertIn("--confirm-credits", buf.getvalue())
+
+    def test_collect_records_history_only(self):
+        calls = []
+
+        def counting_fetch(handle, api_key):
+            calls.append(handle)
+            return fake_fetch(handle, api_key)
+        summary = outliers.collect("brandonbuilds", NOW, "key", fetch_fn=counting_fetch)
+        self.assertEqual(calls, ["@good", "@adj", "@thin", "@dead"])
+        self.assertEqual((summary["attempted"], summary["fetched"], summary["credits"]), (4, 3, 4))
+        self.assertEqual(summary["failed"], ["@dead"])
+        root = Path(self.tmp.name) / "brandonbuilds" / "research" / "youtube-outliers"
+        self.assertEqual(sorted(p.name for p in root.iterdir()), ["history.json"])
+        hist = json.loads((root / "history.json").read_text())
+        self.assertEqual(hist["reported"], {})
+        self.assertIsNone(hist["videos"]["good_hit"]["observations"][0]["score"])
+        self.assertEqual(summary["videos"], len(hist["videos"]))
+
+    def test_collect_twice_same_day_does_not_duplicate(self):
+        outliers.collect("brandonbuilds", NOW, "key", fetch_fn=fake_fetch)
+        outliers.collect("brandonbuilds", NOW + timedelta(hours=2), "key", fetch_fn=fake_fetch)
+        root = Path(self.tmp.name) / "brandonbuilds" / "research" / "youtube-outliers"
+        hist = json.loads((root / "history.json").read_text())
+        self.assertEqual(len(hist["videos"]["good_hit"]["observations"]), 1)
+
+    def test_run_twice_same_day_does_not_duplicate(self):
+        outliers.run("brandonbuilds", NOW, "key", fetch_fn=fake_fetch)
+        outliers.run("brandonbuilds", NOW + timedelta(hours=1), "key", fetch_fn=fake_fetch)
+        root = Path(self.tmp.name) / "brandonbuilds" / "research" / "youtube-outliers"
+        hist = json.loads((root / "history.json").read_text())
+        self.assertEqual(len(hist["videos"]["good_hit"]["observations"]), 1)
+
+    def test_collect_after_run_keeps_scores(self):
+        outliers.run("brandonbuilds", NOW, "key", fetch_fn=fake_fetch)
+        outliers.collect("brandonbuilds", NOW + timedelta(hours=3), "key", fetch_fn=fake_fetch)
+        root = Path(self.tmp.name) / "brandonbuilds" / "research" / "youtube-outliers"
+        obs = json.loads((root / "history.json").read_text())["videos"]["good_hit"]["observations"]
+        self.assertEqual(len(obs), 1)
+        self.assertIsNotNone(obs[0]["score"])
+
+    def test_long_window_skip_suggests_shorter_window(self):
+        def daily(handle, api_key):  # 30 uploads, one a day: nothing older than 30 days
+            return [typical(handle, f"{handle}_{i}", 0.6 + i) for i in range(30)] if handle == "@good" else []
+        out = outliers.run("brandonbuilds", NOW, "key", days=30, fetch_fn=daily)
+        reason = {s["handle"]: s["reason"] for s in out["skipped"]}["@good"]
+        self.assertIn("try --days 7", reason)
+        week = outliers.run("brandonbuilds", NOW, "key", fetch_fn=daily)
+        self.assertNotIn("@good", {s["handle"] for s in week["skipped"]})
+
+    def test_transcript_any_language_flag(self):
+        with mock.patch("scripts.outliers.load_api_key", return_value="k"), \
+                mock.patch("scripts.outliers.fetch.fetch_transcript", return_value="text") as ft, \
+                contextlib.redirect_stdout(io.StringIO()):
+            outliers.main(["transcript", "https://youtu.be/x", "--lang", ""])
+        ft.assert_called_once_with("https://youtu.be/x", "k", language=None)
 
     def test_max_results_cap(self):
         out = outliers.run("brandonbuilds", NOW, "key", max_results=1, fetch_fn=fake_fetch)
@@ -207,6 +299,27 @@ class PublishTests(unittest.TestCase):
         self.assertIn("#### Topic: Hits (2 channels, trend)", md)
         self.assertNotIn("The agent fills this section", md)
         self.assertTrue(Path(res["paths"]["csv"]).exists())
+        notion_md = Path(res["paths"]["notion_md"]).read_text()
+        self.assertTrue(notion_md.startswith("## Video ideas: top"))
+        self.assertTrue(res["notion_title"].startswith("Outliers: brandonbuilds: "))
+
+    def test_publish_handles_older_payload_and_notes(self):
+        path = Path(self.tmp.name) / "brandonbuilds" / "research" / "youtube-outliers"
+        payload_path = sorted(path.glob("20*.json"))[0]
+        payload = json.loads(payload_path.read_text())
+        payload.pop("days", None)
+        for c in payload["candidates"]:
+            for k in ("early", "confidence", "scoring_method", "baseline_limit", "age_hours", "expected_views"):
+                c.pop(k, None)
+        payload_path.write_text(json.dumps(payload))
+        old_notes = json.loads(Path(self.notes).read_text())
+        for b in old_notes.get("breakdowns", []):
+            b.pop("copyable_note", None)
+        Path(self.notes).write_text(json.dumps(old_notes))
+        import contextlib as cl, io as i
+        with cl.redirect_stderr(i.StringIO()):
+            res = outliers.publish("brandonbuilds", self.notes)
+        self.assertIn("## All", Path(res["paths"]["notion_md"]).read_text())
 
     def test_publish_main_no_notion_flag(self):
         import contextlib, io

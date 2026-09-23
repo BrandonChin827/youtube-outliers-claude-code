@@ -140,6 +140,30 @@ class BrandTests(unittest.TestCase):
             self.assertEqual(info["removed"], 1)
             self.assertTrue(info["skipped_own_channel"])
 
+    def test_tracking_stops_at_thirty(self):
+        with sandbox():
+            handles = ", ".join(f"@c{i}" for i in range(32))
+            info = json.loads(run(["brand", "--channel", "@me", "--add", handles])[1])
+            self.assertEqual(info["tracked"], 30)
+            self.assertEqual(info["over_limit"], ["@c30", "@c31"])
+            self.assertFalse(info["under_recommended"])
+            swap = json.loads(run(["brand", "--name", "me", "--remove", "@c0", "--add", "@new"])[1])
+            self.assertEqual((swap["tracked"], swap["added"], swap["over_limit"]), (30, ["@new"], []))
+
+    def test_fewer_than_five_is_allowed_but_flagged(self):
+        with sandbox():
+            few = json.loads(run(["brand", "--channel", "@me", "--add", "@a, @b, @c"])[1])
+            self.assertEqual(few["tracked"], 3)
+            self.assertTrue(few["under_recommended"])
+            enough = json.loads(run(["brand", "--name", "me", "--add", "@d, @e"])[1])
+            self.assertFalse(enough["under_recommended"])
+
+    def test_no_creator_nudge_when_list_unchanged(self):
+        with sandbox():
+            run(["brand", "--channel", "@me", "--add", "@a"])
+            info = json.loads(run(["brand", "--name", "me", "--about", "New."])[1])
+            self.assertFalse(info["under_recommended"])
+
     def test_update_about_replaces_section(self):
         with sandbox():
             run(["brand", "--channel", "@me", "--about", "Old."])

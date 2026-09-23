@@ -75,16 +75,27 @@ def fetch_channel_videos(handle, api_key):
     return normalize_channel_response(handle, data)
 
 
-def fetch_transcript(url, api_key):
-    """GET /v1/youtube/video/transcript — plain text, capped at TRANSCRIPT_WORD_CAP words."""
-    data = sc_get("/v1/youtube/video/transcript", {"url": url}, api_key)
-    if not data:
-        return None
-    text = data.get("transcript_only_text")
+def _transcript_text(data):
+    text = (data or {}).get("transcript_only_text")
     if not text:
-        segments = data.get("transcript") or []
+        segments = (data or {}).get("transcript") or []
         text = " ".join(s.get("text", "") for s in segments if isinstance(s, dict) and s.get("text"))
-    text = (text or "").strip()
+    return (text or "").strip()
+
+
+def fetch_transcript(url, api_key, language="en"):
+    """GET /v1/youtube/video/transcript — plain text, capped at TRANSCRIPT_WORD_CAP words.
+
+    Asks for `language` first, because without it YouTube may hand back an
+    auto-dubbed track (for example Arabic for an English video). When that
+    language isn't available the API returns no text, so we retry once with no
+    language: 1 extra credit, only for those videos.
+    """
+    text = ""
+    if language:
+        text = _transcript_text(sc_get("/v1/youtube/video/transcript", {"url": url, "language": language}, api_key))
+    if not text:
+        text = _transcript_text(sc_get("/v1/youtube/video/transcript", {"url": url}, api_key))
     if not text:
         return None
     return " ".join(text.split()[:TRANSCRIPT_WORD_CAP])

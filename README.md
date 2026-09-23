@@ -48,11 +48,29 @@ If you'd like reports in Notion too, connect Notion in Claude's settings under C
 | Action | ScrapeCreators credits |
 |---|---|
 | Checking your key during setup | at most 1, once |
-| Weekly scan | about 1 per creator you follow |
-| Top-five breakdowns | 5 (one transcript each) |
+| Weekly scan | about 1 per creator you follow (5 to 30 creators) |
+| Top-five breakdowns | 5 to 10 (one transcript each, plus one if a video has no English transcript) |
 | Re-formatting or re-publishing a report | 0 |
+| Optional snapshot collection (only if you ask) | about 1 per creator, each time |
 
 Claude always tells you the cost and waits for your OK before a scan.
+
+Reports cover the last 7 days. Want a longer look-back? Ask for "the last 30 days". It costs the same, but creators who post every day can only be scored on shorter windows, and the report will say so.
+
+## How scores work
+
+A score compares a new video with that creator's normal. It divides the video's views by the views that creator's typical video has at the same age. "Typical" comes from their 15 most recent long-form videos that are at least two weeks old, so a fast-growing channel is judged against its current level, not last year's. 2x or more is "notable" and 5x or more is a "breakout".
+
+It's age-adjusted, not yet a perfect same-age match. New videos get most of their views in the first few days, so the skill uses a general curve of how views build up over time. Each score has a label that tells you how much to trust it:
+
+- **early:** under 24 hours old. Views move fastest then, so treat the score as a first look.
+- **high / medium / low confidence:** high needs at least 8 recent videos to compare with and a video at least 3 days old. Early videos and channels with few recent uploads are low.
+
+Every report also saves view snapshots of the videos it sees, at no extra cost. Over time that history will let scores use each channel's own real view curve.
+
+## Advanced and optional: daily snapshots
+
+You don't need this. If you want view history between weekly reports, ask Claude to "collect snapshots". It costs about 1 credit per creator you follow, every time it runs, and Claude asks before spending. It only saves view counts: no report, no transcripts. Nothing runs automatically.
 
 ## Privacy and your API key
 
@@ -65,7 +83,7 @@ Claude always tells you the cost and waits for your OK before a scan.
 When a user asks you to install or update this skill from this repository:
 
 1. Clone the repo to a temporary folder.
-2. Run the offline tests: `python3 -m unittest test_install -q`, then `python3 -m unittest discover -s youtube-outliers/tests -q`. Stop and report if anything fails.
+2. Run the offline tests: `python3 -m unittest test_install -q`, then `python3 -m unittest discover -s youtube-outliers/tests -t youtube-outliers -q`. Stop and report if anything fails.
 3. Run `python3 install.py`. It only copies files; it asks no questions.
 4. Tell the user it's installed and to type `/youtube-outliers` to set it up in chat (restart Claude Code if the command doesn't appear yet).
 

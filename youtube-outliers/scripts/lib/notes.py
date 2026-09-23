@@ -2,8 +2,8 @@
 
 The agent (Claude Code, Hermes, …) does the judgment work — clustering by topic
 and writing the top-5 breakdowns — and saves it as JSON. Everything rendered
-from it (Markdown Notes, CSV topic column, Notion page, Discord summary) is
-deterministic, so formatting can be replayed without spending API credits.
+from it (Markdown Notes, CSV topic column, Discord summary, and the Notion page
+in notion_page.py) is deterministic, so formatting can be replayed without spending API credits.
 
 Schema:
 {
@@ -141,11 +141,11 @@ def write_csv(path, payload, notes):
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["Rank", "Score", "Tier", "Topic", "Channel", "Title", "Views", "Age (days)",
-                    "Adjacent", "Seen before", "Link", "Thumbnail"])
+                    "Adjacent", "Seen before", "Link", "Thumbnail", "Confidence", "Early"])
         for i, c in enumerate(payload["candidates"], 1):
             w.writerow([i, f"{c['score']}x", c["tier"], tmap.get(c["id"], ""), c["channel"], c["title"], c["views"],
                         c["age_days"], "yes" if c.get("adjacent") else "", "yes" if c.get("seen") else "",
-                        c["url"], c.get("thumbnail", "")])
+                        c["url"], c.get("thumbnail", ""), c.get("confidence", ""), "yes" if c.get("early") else ""])
     return path
 
 
@@ -188,7 +188,9 @@ def _render_discord(payload, notes, notion_url, include_why):
             c = by_id[b["video_id"]]
             first_title = (b.get("titles") or [c["title"]])[0]
             lines.append(f"{i}. **{generated_text(first_title)}**")
-            lines.append(f"   from [{c['title'][:60]}]({c['url']}) · {c['score']}x · {fmt_views(c['views'])} views · {c['channel']} · copy: {b.get('copyable', '?')}")
+            conf = f" · {c['confidence']} confidence" if c.get("confidence") else ""
+            early = " · early" if c.get("early") else ""
+            lines.append(f"   from [{c['title'][:60]}]({c['url']}) · {c['score']}x · {fmt_views(c['views'])} views{early}{conf} · {c['channel']} · copy: {b.get('copyable', '?')}")
             if include_why and b.get("why"):
                 lines.append(f"   _why:_ {'; '.join(generated_text(reason) for reason in b['why'])}")
     if notion_url:

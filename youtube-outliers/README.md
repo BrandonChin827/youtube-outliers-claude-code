@@ -3,3 +3,5 @@
 Install this folder at `~/.claude/skills/youtube-outliers/`, then type `/youtube-outliers` in Claude Code. Claude sets everything up with you in chat. The API key goes into a pop-up window, never the chat.
 
 See `references/SETUP.md` and `references/SECURITY.md` for details. The skill is manual-only because scans spend ScrapeCreators credits.
+
+Scores are age-adjusted against each creator's 15 most recent long-form videos, with `early` and confidence labels. An optional `collect` command saves view snapshots between reports; it's never scheduled and costs about one credit per channel.
