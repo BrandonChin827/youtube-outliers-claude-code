@@ -1,53 +1,33 @@
 # Setup reference
 
-## ScrapeCreators
+Setup happens in chat. `SKILL.md` has the script Claude follows; this file documents the helper commands behind it.
 
-1. Open <https://app.scrapecreators.com/>.
-2. Create an account or sign in.
-3. Copy the API key from the dashboard.
-4. In a normal terminal, run `python3 install.py` from the repository (it starts the wizard automatically), or rerun the wizard later with:
+## Helper commands
 
-```bash
-python3 ~/.claude/skills/youtube-outliers/scripts/setup.py
-```
+All commands live in `scripts/setup.py`, make no ScrapeCreators calls unless noted, and never print the API key.
 
-5. Paste the key only when the terminal shows `API key:`. Input is not echoed. Setup tests the key once with ScrapeCreators' credit-balance endpoint (at most 1 credit) and asks again if it is rejected. Press Enter to skip and add it later.
+| Command | What it does |
+|---|---|
+| `status [--brand B]` | JSON: `key` (configured/missing), `brands` (channel, description filled, tracked handles, Notion page), and `next_step` (`key`, `about`, `competitors`, `ready`). No network. |
+| `key` | macOS: opens a pop-up with a hidden field. Checks the key once with ScrapeCreators' credit-balance endpoint (at most 1 credit) and saves it. Prints `saved:`, `saved-unverified:`, `rejected:`, `cancelled:`, or `needs-terminal:`. |
+| `key --terminal` | Same, with a hidden terminal prompt instead of a pop-up. Used on Windows and Linux. |
+| `brand --channel C --about A` | Creates the brand. The folder name comes from the channel handle, or `my-channel` when there's no channel. |
+| `brand --name N --add LIST --remove LIST` | Adds or removes tracked creators. Accepts `@handle`, `handle`, or channel links, comma-separated. The user's own channel is never added. |
+| `brand --name N --notion-page P` | Saves the Notion parent page (link or ID) to `notion.md`. |
+| `verify-handles LIST` | Checks each handle's YouTube page exists. Free: no ScrapeCreators credits. |
+| `--check --brand B` | Older plain-text check, kept for compatibility. |
 
-The API authenticates through the `x-api-key` header. The skill reads the key from the process environment first, then from `~/.config/youtube-outliers/.env`. It never needs the key inside `SKILL.md` or a project repository.
-
-## Brand files
-
-The setup wizard creates:
+## Files it writes
 
 ```text
-<CONTENT_HOME>/<brand>/brand/profile.md
-<CONTENT_HOME>/<brand>/brand/tracked-accounts/youtube.md
+~/.config/youtube-outliers/.env                          # SCRAPECREATORS_API_KEY, CONTENT_HOME (mode 600)
+<CONTENT_HOME>/<brand>/brand/profile.md                   # My channel, My content, Title style, Avoid
+<CONTENT_HOME>/<brand>/brand/tracked-accounts/youtube.md  # | Handle | Category | Notes |
+<CONTENT_HOME>/<brand>/brand/notion.md                    # page_id: ... (optional)
 ```
 
-The wizard asks for competitor handles (comma-separated; `@handle`, `handle`, or a `youtube.com/@handle` link all work) and adds any that are not already in the table. You can also edit the table directly, one handle per row. Empty tables are rejected.
+`CONTENT_HOME` defaults to `~/Documents/Content`. To use another folder, set `CONTENT_HOME` in your environment before setup; it's remembered in the private config file.
 
-The wizard also asks for your channel (optional) and a short description of the videos you make now and want to make going forward, and saves them in the profile. You can edit the profile any time.
+## Notion
 
-## Notion, optional
-
-Not required. Reports are always saved locally. The Notion MCP connector is not needed; the skill uses its own integration secret.
-
-
-1. Open <https://www.notion.so/profile/integrations>.
-2. Create an internal integration and copy its token.
-3. Open the intended parent page in Notion and add the integration under Connections.
-4. Enter the token and parent page ID in the setup wizard.
-
-The skill stores `NOTION_API_KEY` in the same private config file and writes only the parent `page_id` to the brand's `notion.md`.
-
-## Check
-
-```bash
-python3 ~/.claude/skills/youtube-outliers/scripts/setup.py --check --brand "<brand>"
-```
-
-The check reports whether secrets and input files exist. It makes no network calls and never prints secret values.
-
-## Move or customize content storage
-
-Reports are saved under `~/Documents/Content` by default. To use a different folder, set `CONTENT_HOME` in your environment before running setup; setup remembers it in the private config file. The environment variable takes priority over the private config file.
+Reports are always saved locally. Notion is optional and uses Claude's Notion connector (Settings → Connectors). No integration secret, token, or page-sharing step is needed. Claude creates each report as a child page of the saved parent page, and records the page in `<run-date>-notion.json` so revisions update the same page.

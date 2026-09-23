@@ -5,8 +5,10 @@
   python3 outliers.py run <brand> [--max 30]              # fetch, score, write report + JSON, print ranked list
   python3 outliers.py transcript <url>                     # print a video's transcript (1 credit)
   python3 outliers.py notes-skeleton <brand> [--date D]    # print a notes.json template with real video ids
-  python3 outliers.py publish <brand> --notes notes.json   # render Notes/CSV/Notion/Discord summary from notes.json
-                                [--date D] [--no-notion]
+  python3 outliers.py publish <brand> --notes notes.json   # render Notes/CSV + chat summary from notes.json
+                                [--date D]
+
+Notion pages are created by Claude through the Notion connector, not by this script.
 
 Progress goes to stderr; only the deliverable goes to stdout. `publish` spends
 no ScrapeCreators credits and can be re-run to iterate on formatting.
@@ -21,8 +23,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # make `scripts.lib` importable when run directly
 
-from scripts.lib import fetch, history, notes as notes_mod, notion, report  # noqa: E402
-from scripts.lib.env import brand_home, load_api_key, load_notion_key  # noqa: E402
+from scripts.lib import fetch, history, notes as notes_mod, report  # noqa: E402
+from scripts.lib.env import brand_home, load_api_key  # noqa: E402
 from scripts.lib.scoring import MIN_SCORE, MIN_SPARSE_BASELINE, channel_baseline, score_channel  # noqa: E402
 from scripts.lib.tracked import load_tracked  # noqa: E402
 
@@ -106,9 +108,8 @@ def load_payload(brand, run_date=None):
     return json.loads(path.read_text())
 
 
-def publish(brand, notes_path, run_date=None, use_notion=True, notion_token=None,
-            publish_page=notion.publish_page):
-    """Render everything derived from notes.json. Returns {"discord", "notion_url", "paths"}."""
+def publish(brand, notes_path, run_date=None):
+    """Render everything derived from notes.json. Returns {"discord", "paths"}."""
     payload = load_payload(brand, run_date)
     notes = notes_mod.load(notes_path)
     paths = dict(payload.get("paths", {}))
@@ -120,21 +121,7 @@ def publish(brand, notes_path, run_date=None, use_notion=True, notion_token=None
     notes_mod.fill_markdown_notes(paths["md"], notes_mod.render_markdown_notes(payload, notes))
     notes_mod.write_csv(paths["csv"], payload, notes)
 
-    notion_url = None
-    if use_notion:
-        cfg = brand_home(brand) / "brand" / "notion.md"
-        parent = notion.parse_parent_page_id(cfg.read_text()) if cfg.exists() else None
-        token = notion_token if notion_token is not None else load_notion_key()
-        if not parent:
-            log(f"Notion skipped: no page_id in {cfg}")
-        elif not token:
-            log("Notion skipped: NOTION_API_KEY not set (env or ~/.config/youtube-outliers/.env)")
-        else:
-            title = f"Outliers: {report.generated_text(brand)}: {payload['run_date']}"
-            state_path = out_dir / f"{payload['run_date']}-notion.json"
-            notion_url = publish_page(parent, title, notion.build_page_blocks(payload, notes), token, state_path)
-            log(f"Notion page: {notion_url}" if notion_url else "Notion page creation failed (see above)")
-    return {"discord": notes_mod.render_discord(payload, notes, notion_url), "notion_url": notion_url, "paths": paths}
+    return {"discord": notes_mod.render_discord(payload, notes), "paths": paths}
 
 
 def main(argv=None):
@@ -152,7 +139,7 @@ def main(argv=None):
     pb.add_argument("brand")
     pb.add_argument("--notes", required=True)
     pb.add_argument("--date")
-    pb.add_argument("--no-notion", action="store_true")
+    pb.add_argument("--no-notion", action="store_true", help=argparse.SUPPRESS)  # accepted for older instructions
     args = p.parse_args(argv)
 
     if args.cmd == "notes-skeleton":
@@ -161,7 +148,7 @@ def main(argv=None):
 
     if args.cmd == "publish":
         try:
-            result = publish(args.brand, args.notes, args.date, use_notion=not args.no_notion)
+            result = publish(args.brand, args.notes, args.date)
         except ValueError as e:
             log(str(e))
             return 1

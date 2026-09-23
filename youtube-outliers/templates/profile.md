@@ -4,7 +4,6 @@
 [FILL]
 
 ## My content
-What I make now, and what I want to make going forward.
 [FILL]
 
 ## Title style

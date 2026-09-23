@@ -197,34 +197,16 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(sk["clusters"][0]["video_ids"], ["good_hit", "adj_hit", "good_ok"])
         self.assertEqual([b["video_id"] for b in sk["breakdowns"]], ["good_hit", "adj_hit", "good_ok"])  # <5 non-adjacent → adjacent backfills
 
-    def test_publish_renders_everything_and_calls_notion(self):
+    def test_publish_renders_everything_locally(self):
         import contextlib, io
-        seen = {}
-
-        def fake_publish(parent, title, blocks, token, state_path):
-            seen.update(parent=parent, title=title, n=len(blocks), token=token, state_path=state_path)
-            return "https://notion.so/page"
-
         with contextlib.redirect_stderr(io.StringIO()):
-            res = outliers.publish("brandonbuilds", self.notes, notion_token="tok", publish_page=fake_publish)
-        self.assertEqual(res["notion_url"], "https://notion.so/page")
-        self.assertEqual(seen["parent"], "3e33d58f-a612-81fa-91ff-f38449a0647c")
-        self.assertEqual(seen["title"], "Outliers: brandonbuilds: 2026-09-21")
-        self.assertTrue(str(seen["state_path"]).endswith("2026-09-21-notion.json"))
-        self.assertIn("Full report: https://notion.so/page", res["discord"])
+            res = outliers.publish("brandonbuilds", self.notes)
+        self.assertNotIn("Full report:", res["discord"])
         self.assertIn("1. **A**", res["discord"])
         md = Path(res["paths"]["md"]).read_text()
         self.assertIn("#### Topic: Hits (2 channels, trend)", md)
         self.assertNotIn("The agent fills this section", md)
         self.assertTrue(Path(res["paths"]["csv"]).exists())
-
-    def test_publish_skips_notion_without_token(self):
-        import contextlib, io
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            res = outliers.publish("brandonbuilds", self.notes, notion_token="", publish_page=lambda *a: self.fail("called"))
-        self.assertIsNone(res["notion_url"])
-        self.assertIn("Notion skipped", err.getvalue())
 
     def test_publish_main_no_notion_flag(self):
         import contextlib, io

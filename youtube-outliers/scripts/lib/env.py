@@ -11,7 +11,6 @@ CONFIG_DIR = Path(os.environ.get("YOUTUBE_OUTLIERS_CONFIG_DIR", str(Path.home() 
 ENV_PATH = CONFIG_DIR / ".env"
 FALLBACK_ENV_PATHS = ()
 KEY_NAME = "SCRAPECREATORS_API_KEY"
-NOTION_KEY_NAME = "NOTION_API_KEY"
 CONTENT_HOME_VAR = "CONTENT_HOME"
 DEFAULT_CONTENT_HOME = Path.home() / "Documents" / "Content"
 BRAND_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
@@ -62,6 +61,3 @@ def load_key(name, env_path=ENV_PATH):
 def load_api_key(env_path=ENV_PATH):
     return load_key(KEY_NAME, env_path)
 
-
-def load_notion_key(env_path=ENV_PATH):
-    return load_key(NOTION_KEY_NAME, env_path)

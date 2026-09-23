@@ -1,11 +1,25 @@
 #!/usr/bin/env python3
-"""Safe interactive onboarding for the YouTube Outliers skill."""
+"""Setup helpers Claude calls while onboarding someone in chat.
+
+  setup.py key [--terminal]        ask for the ScrapeCreators key privately, test it, save it
+  setup.py brand --channel C --about A [--add LIST] [--remove LIST] [--notion-page P] [--name N]
+                                   create or update a brand from answers collected in chat
+  setup.py verify-handles LIST     check YouTube handles exist (free, no credits)
+  setup.py status [--brand B]      JSON summary of what's set up and the next step (no network)
+  setup.py --check --brand B       plain-text check, kept for older instructions
+
+The API key is never printed and never passes through Claude's chat.
+"""
 
 import argparse
 import getpass
+import html
+import json
 import os
 import re
+import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import urllib.error
@@ -15,11 +29,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from scripts.lib import env, tracked as tracked_lib  # noqa: E402
 
-SIGNUP_URL = "https://app.scrapecreators.com/"
-NOTION_URL = "https://www.notion.so/profile/integrations"
 CREDIT_URL = "https://api.scrapecreators.com/v1/account/credit-balance"
 BRAND_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 HANDLE_RE = re.compile(r"^@[A-Za-z0-9._-]{1,100}$")
+NOTION_ID_RE = re.compile(r"([0-9a-f]{8})-?([0-9a-f]{4})-?([0-9a-f]{4})-?([0-9a-f]{4})-?([0-9a-f]{12})(?![0-9a-f])", re.I)
+FILL = "[FILL]"
 
 PROFILE_TEMPLATE = """# Brand profile
 
@@ -27,7 +41,6 @@ PROFILE_TEMPLATE = """# Brand profile
 [FILL]
 
 ## My content
-What I make now, and what I want to make going forward.
 [FILL]
 
 ## Title style
@@ -42,12 +55,18 @@ What I make now, and what I want to make going forward.
 
 TRACKED_TEMPLATE = """# Tracked YouTube channels
 
-Add one public YouTube channel per row. `@handle` and `handle` both work.
+One public YouTube channel per row. `@handle` and `handle` both work.
 
 | Handle | Category | Notes |
 |---|---|---|
 """
 
+POPUP_SCRIPT = """activate
+set theKey to text returned of (display dialog "Paste your ScrapeCreators API key below." & return & return & "It is saved only on this computer and never shown in chat." default answer "" with hidden answer with title "YouTube Outliers" buttons {"Cancel", "Save"} default button "Save" cancel button "Cancel" giving up after 600)
+return theKey"""
+
+
+# ---------- secrets ----------
 
 def read_values(path):
     values = {}
@@ -69,10 +88,9 @@ def write_values(path, updates):
     current = read_values(path)
     current.update({k: v for k, v in updates.items() if v is not None})
     lines = ["# YouTube Outliers configuration. Never commit or share this file."]
-    for key in ("SCRAPECREATORS_API_KEY", "NOTION_API_KEY", "CONTENT_HOME"):
-        value = current.get(key, "")
-        if value:
-            lines.append(f"{key}={value}")
+    for key in ("SCRAPECREATORS_API_KEY", "CONTENT_HOME"):
+        if current.get(key):
+            lines.append(f"{key}={current[key]}")
     fd, temp_name = tempfile.mkstemp(prefix=".env.", dir=str(path.parent), text=True)
     temp = Path(temp_name)
     try:
@@ -86,61 +104,8 @@ def write_values(path, updates):
     os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
 
 
-def create_brand(content_home, brand, notion_page_id=""):
-    brand_dir = content_home / brand / "brand"
-    tracked = brand_dir / "tracked-accounts" / "youtube.md"
-    profile = brand_dir / "profile.md"
-    notion = brand_dir / "notion.md"
-    tracked.parent.mkdir(parents=True, exist_ok=True)
-    if not tracked.exists():
-        tracked.write_text(TRACKED_TEMPLATE)
-    if not profile.exists():
-        profile.write_text(PROFILE_TEMPLATE)
-    if notion_page_id:
-        notion.write_text(f"page_id: {notion_page_id.strip()}\n")
-    return profile, tracked, notion
-
-
-def parse_handles(raw):
-    handles = []
-    for part in raw.replace("\n", ",").split(","):
-        part = part.strip().rstrip("/")
-        if not part:
-            continue
-        if "youtube.com/" in part:
-            part = part.split("youtube.com/", 1)[1].split("/", 1)[0]
-        handle = part if part.startswith("@") else f"@{part}"
-        if not HANDLE_RE.fullmatch(handle):
-            raise ValueError(f"\"{part}\" is not a valid YouTube handle")
-        handles.append(handle)
-    return handles
-
-
-def add_channels(tracked, raw):
-    """Append new handles to the tracked table, skipping ones already listed."""
-    seen = {row["handle"].lower() for row in tracked_lib.load_tracked(tracked)}
-    added = []
-    for handle in parse_handles(raw):
-        if handle.lower() not in seen:
-            seen.add(handle.lower())
-            added.append(handle)
-    if added:
-        text = tracked.read_text()
-        if not text.endswith("\n"):
-            text += "\n"
-        tracked.write_text(text + "".join(f"| {h} |  |  |\n" for h in added))
-    return added
-
-
-def validate_brand(value):
-    value = value.strip().lower()
-    if not BRAND_RE.fullmatch(value):
-        raise ValueError("Brand must use lowercase letters, numbers, and hyphens only.")
-    return value
-
-
 def verify_key(key):
-    """Test a ScrapeCreators key once, during setup, with the credit-balance endpoint.
+    """Test a ScrapeCreators key once with the credit-balance endpoint.
 
     Returns "valid", "invalid", or "unknown" (network trouble). Never prints the key.
     """
@@ -154,16 +119,240 @@ def verify_key(key):
         return "unknown"
 
 
+def popup_key():
+    """Ask for the key in a macOS dialog. Returns the key, "" if cancelled, or None if no dialog is possible."""
+    if sys.platform != "darwin" or not shutil.which("osascript"):
+        return None
+    try:
+        result = subprocess.run(["osascript", "-e", POPUP_SCRIPT], capture_output=True, text=True, timeout=660)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return "" if "-128" in result.stderr else None
+    return result.stdout.strip()
+
+
+def cmd_key(terminal=False):
+    key = None if terminal else popup_key()
+    if key is None:
+        if not sys.stdin.isatty():
+            print("needs-terminal: no pop-up available here. Run this command in a terminal:")
+            print(f'python3 "{Path(__file__).resolve()}" key --terminal')
+            return 2
+        try:
+            key = getpass.getpass("Paste your ScrapeCreators API key (nothing shows while you paste): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            key = ""
+    if not key:
+        print("cancelled: no key was entered, nothing was saved.")
+        return 1
+    status = verify_key(key)
+    if status == "invalid":
+        print("rejected: ScrapeCreators didn't accept that key, nothing was saved.")
+        return 1
+    write_values(env.ENV_PATH, {"SCRAPECREATORS_API_KEY": key, "CONTENT_HOME": str(env.content_home())})
+    if status == "valid":
+        print("saved: the key works and is saved privately on this computer.")
+    else:
+        print("saved-unverified: couldn't reach ScrapeCreators to test the key, so it was saved as is.")
+    return 0
+
+
+# ---------- brands ----------
+
 def slugify(value):
-    """Turn a typed nickname like 'My Channel!' into 'my-channel'."""
+    """Turn a typed name like 'My Channel!' into 'my-channel'."""
     return re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")[:63]
 
 
+def validate_brand(value):
+    value = value.strip().lower()
+    if not BRAND_RE.fullmatch(value):
+        raise ValueError("Brand must use lowercase letters, numbers, and hyphens only.")
+    return value
+
+
+def parse_handles(raw):
+    handles = []
+    for part in raw.replace("\n", ",").split(","):
+        part = part.strip().rstrip("/")
+        if not part:
+            continue
+        if "youtube.com/" in part:
+            part = part.split("youtube.com/", 1)[1].split("/", 1)[0].split("?", 1)[0]
+        handle = part if part.startswith("@") else f"@{part}"
+        if not HANDLE_RE.fullmatch(handle):
+            raise ValueError(f"\"{part}\" is not a valid YouTube handle")
+        handles.append(handle)
+    return handles
+
+
+def notion_page_id(value):
+    """Pull the page ID out of a Notion link or ID. Returns '' if none is found."""
+    match = NOTION_ID_RE.search(value.strip())
+    return "-".join(match.groups()).lower() if match else ""
+
+
+def create_brand(content_home, brand, notion_page=""):
+    brand_dir = content_home / brand / "brand"
+    tracked = brand_dir / "tracked-accounts" / "youtube.md"
+    profile = brand_dir / "profile.md"
+    notion = brand_dir / "notion.md"
+    tracked.parent.mkdir(parents=True, exist_ok=True)
+    if not tracked.exists():
+        tracked.write_text(TRACKED_TEMPLATE)
+    if not profile.exists():
+        profile.write_text(PROFILE_TEMPLATE)
+    if notion_page:
+        notion.write_text(f"page_id: {notion_page}\n")
+    return profile, tracked, notion
+
+
+def read_section(profile, title):
+    match = re.search(rf"^## {re.escape(title)}\n(.*?)(?=^## |\Z)", profile.read_text(), re.M | re.S)
+    value = match.group(1).strip() if match else ""
+    return "" if value == FILL else value
+
+
+def set_section(profile, title, value):
+    """Replace a '## title' section's body, or add the section if it's missing."""
+    text = profile.read_text()
+    pattern = re.compile(rf"^## {re.escape(title)}\n.*?(?=^## |\Z)", re.M | re.S)
+    block = f"## {title}\n{value.strip()}\n\n"
+    text = pattern.sub(lambda _: block, text, count=1) if pattern.search(text) else text.rstrip() + f"\n\n{block}"
+    profile.write_text(text.rstrip() + "\n")
+
+
+def add_channels(tracked, handles):
+    """Append handles to the tracked table, skipping ones already listed."""
+    seen = {row["handle"].lower() for row in tracked_lib.load_tracked(tracked)}
+    added = []
+    for handle in handles:
+        if handle.lower() not in seen:
+            seen.add(handle.lower())
+            added.append(handle)
+    if added:
+        text = tracked.read_text()
+        if not text.endswith("\n"):
+            text += "\n"
+        tracked.write_text(text + "".join(f"| {h} |  |  |\n" for h in added))
+    return added
+
+
+def remove_channels(tracked, handles):
+    drop = {h.lower().lstrip("@") for h in handles}
+    lines = tracked.read_text().splitlines(keepends=True)
+
+    def is_dropped(line):
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        return line.lstrip().startswith("|") and cells and cells[0].lower().lstrip("@") in drop
+
+    kept = [line for line in lines if not is_dropped(line)]
+    tracked.write_text("".join(kept))
+    return len(lines) - len(kept)
+
+
+def own_handle(channel):
+    if not channel or channel.strip().lower() in ("none", "no", "-"):
+        return ""
+    return parse_handles(channel)[0]
+
+
+def cmd_brand(channel=None, about=None, add="", remove="", notion_page="", name=""):
+    content_home = env.content_home()
+    own = own_handle(channel) if channel is not None else ""
+    brand = validate_brand(name or slugify(own[1:]) or "my-channel")
+    page = notion_page_id(notion_page) if notion_page else ""
+    if notion_page and not page:
+        raise ValueError(f"couldn't find a Notion page ID in \"{notion_page}\"")
+    profile, tracked, notion = create_brand(content_home, brand, page)
+    if channel is not None:
+        set_section(profile, "My channel", f"https://www.youtube.com/{own}" if own else "No channel yet")
+    else:
+        saved = read_section(profile, "My channel")
+        own = own_handle(saved) if "youtube.com/@" in saved or saved.startswith("@") else ""
+    if about:
+        set_section(profile, "My content", about)
+    competitors = [h for h in parse_handles(add) if h.lower() != own.lower()] if add else []
+    skipped_own = bool(add) and own and any(h.lower() == own.lower() for h in parse_handles(add))
+    added = add_channels(tracked, competitors)
+    removed = remove_channels(tracked, parse_handles(remove)) if remove else 0
+    summary = brand_summary(content_home, brand)
+    summary.update({"added": added, "removed": removed, "skipped_own_channel": bool(skipped_own)})
+    print(json.dumps(summary, indent=2))
+    return 0
+
+
+def verify_handles(raw, opener=urllib.request.urlopen):
+    """Check each handle's YouTube page. Returns [{"handle", "exists", "name"}]. Free: no ScrapeCreators credits."""
+    results = []
+    for handle in parse_handles(raw):
+        req = urllib.request.Request(f"https://www.youtube.com/{handle}",
+                                     headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en"})
+        entry = {"handle": handle, "exists": None, "name": ""}
+        try:
+            with opener(req, timeout=15) as resp:
+                page = resp.read(3_000_000).decode("utf-8", "replace")
+            entry["exists"] = True
+            match = re.search(r'<meta property="og:title" content="([^"]*)"', page)
+            entry["name"] = html.unescape(match.group(1)) if match else ""
+        except urllib.error.HTTPError as exc:
+            entry["exists"] = False if exc.code == 404 else None
+        except (urllib.error.URLError, OSError, TimeoutError):
+            pass
+        results.append(entry)
+    return results
+
+
+# ---------- status ----------
+
+def brand_summary(content_home, brand):
+    base = content_home / brand / "brand"
+    profile = base / "profile.md"
+    tracked = base / "tracked-accounts" / "youtube.md"
+    notion = base / "notion.md"
+    handles = [r["handle"] for r in tracked_lib.load_tracked(tracked)] if tracked.exists() else []
+    page = notion_page_id(notion.read_text()) if notion.exists() else ""
+    return {
+        "name": brand,
+        "channel": read_section(profile, "My channel") if profile.exists() else "",
+        "about_filled": bool(profile.exists() and (read_section(profile, "My content") or read_section(profile, "Audience"))),
+        "tracked": len(handles),
+        "handles": handles,
+        "notion_page": page,
+        "profile_path": str(profile),
+        "tracked_path": str(tracked),
+    }
+
+
+def list_brands(content_home):
+    if not content_home.exists():
+        return []
+    return sorted(p.name for p in content_home.iterdir() if (p / "brand").is_dir() and BRAND_RE.fullmatch(p.name))
+
+
+def status(brand=""):
+    content_home = env.content_home()
+    names = [validate_brand(brand)] if brand else list_brands(content_home)
+    brands = [brand_summary(content_home, b) for b in names]
+    has_key = bool(env.load_api_key(env.ENV_PATH))
+    if not has_key:
+        next_step = "key"
+    elif not brands or not any(b["channel"] or b["about_filled"] for b in brands):
+        next_step = "about"
+    elif not any(b["tracked"] for b in brands):
+        next_step = "competitors"
+    else:
+        next_step = "ready"
+    return {"key": "configured" if has_key else "missing", "content_home": str(content_home),
+            "brands": brands, "next_step": next_step}
+
+
 def check(brand=""):
+    """Plain-text check for older instructions. Never prints secrets, makes no network calls."""
     problems = []
-    key = env.load_api_key()
-    home = env.content_home()
     config = env.ENV_PATH
+    key = env.load_api_key(env.ENV_PATH)
     if not key:
         problems.append("ScrapeCreators API key is not configured")
     if config.parent.exists() and stat.S_IMODE(config.parent.stat().st_mode) & 0o077:
@@ -172,23 +361,17 @@ def check(brand=""):
         problems.append(f"secret file permissions are too broad: {config}")
     if brand:
         try:
-            brand = validate_brand(brand)
+            info = brand_summary(env.content_home(), validate_brand(brand))
         except ValueError as exc:
             problems.append(str(exc))
         else:
-            base = home / brand / "brand"
-            profile = base / "profile.md"
-            tracked = base / "tracked-accounts" / "youtube.md"
-            if not profile.exists():
-                problems.append(f"missing brand profile: {profile}")
-            if not tracked.exists():
-                problems.append(f"missing tracked-channel table: {tracked}")
-            elif not any(line.strip().startswith("|") and "---" not in line and "Handle" not in line for line in tracked.read_text().splitlines()):
-                problems.append(f"tracked-channel table has no channel rows: {tracked}")
+            if not Path(info["profile_path"]).exists():
+                problems.append(f"missing brand profile: {info['profile_path']}")
+            if not info["tracked"]:
+                problems.append(f"no tracked channels yet: {info['tracked_path']}")
     print(f"Config: {config}")
-    print(f"Content root: {home}")
+    print(f"Content root: {env.content_home()}")
     print(f"ScrapeCreators key: {'configured' if key else 'missing'}")
-    print(f"Notion key: {'configured' if env.load_notion_key() else 'not configured (optional)'}")
     if problems:
         print("\nSetup incomplete:")
         for problem in problems:
@@ -198,176 +381,45 @@ def check(brand=""):
     return 0
 
 
-PROFILE_QUESTIONS = (
-    ("channel", "Your YouTube channel, if you have one. Paste the link or @handle, or press Enter to skip.",
-     "@yourchannel"),
-    ("content", "In a sentence or two, what kind of videos do you make now, and what do you want to make going forward?",
-     "I make budget cooking videos. Going forward I want to do more 15-minute weeknight meals."),
-)
-PROFILE_SECTIONS = {"channel": "## My channel\n", "content": "## My content\nWhat I make now, and what I want to make going forward.\n"}
-NOTION_ID_RE = re.compile(r"([0-9a-f]{8})-?([0-9a-f]{4})-?([0-9a-f]{4})-?([0-9a-f]{4})-?([0-9a-f]{12})(?![0-9a-f])", re.I)
-
-
-def fill_profile(profile, answers):
-    """Replace [FILL] placeholders in a new profile with the user's answers."""
-    text = profile.read_text()
-    for key, heading in PROFILE_SECTIONS.items():
-        if answers.get(key):
-            text = text.replace(f"{heading}[FILL]\n", f"{heading}{answers[key]}\n", 1)
-    profile.write_text(text)
-
-
-def notion_page_id(value):
-    """Pull the page ID out of a Notion link or ID. Returns '' if none is found."""
-    match = NOTION_ID_RE.search(value.strip())
-    return "-".join(match.groups()).lower() if match else ""
-
-
-def ask(prompt, default=""):
-    suffix = f" [{default}]" if default else ""
-    value = input(f"  {prompt}{suffix}: ").strip()
-    return value or default
-
-
-def yes(prompt, default="no"):
-    return ask(prompt, default).lower() in ("y", "yes")
-
-
-def step(number, title, *lines):
-    print(f"\nStep {number} of 5: {title}")
-    for line in lines:
-        print(f"  {line}")
-    print()
-
-
-def interactive():
-    existing = read_values(env.ENV_PATH)
-    content_home = env.content_home()
-
-    print("=" * 50)
-    print("  YouTube Outliers setup")
-    print("=" * 50)
-    print("This takes about 2 minutes: 5 short steps.")
-    print("When you see a suggestion in [brackets], press Enter to use it.")
-
-    step(1, "Connect ScrapeCreators",
-         "ScrapeCreators is the service that looks up YouTube data for you.",
-         f"1. Open {SIGNUP_URL} and sign up or log in.",
-         "2. Copy your API key from the dashboard.",
-         "3. Paste it below and press Enter.",
-         "Nothing will appear while you paste. That is normal and keeps your key private.",
-         "No account yet? Press Enter to skip. You can add the key later.")
-    scrape_key = None
-    has_key = bool(existing.get("SCRAPECREATORS_API_KEY"))
-    if has_key and not yes("You already saved a key. Replace it? (yes/no)"):
-        print("  OK, keeping your saved key.")
-    else:
-        while True:
-            entered = getpass.getpass("  API key: ").strip()
-            if not entered:
-                print("  Skipped. Setup will remind you how to add it at the end.")
-                break
-            status = verify_key(entered)
-            if status == "invalid":
-                print("  ScrapeCreators didn't accept that key. Copy it again from the dashboard and paste it,")
-                print("  or press Enter to skip for now.")
-                continue
-            scrape_key, has_key = entered, True
-            if status == "valid":
-                print("  Key works. It will be saved privately on this computer.")
-            else:
-                print("  Couldn't reach ScrapeCreators to test the key, so it was saved as is.")
-            break
-
-    step(2, "Pick a short nickname for your channel",
-         "This names the folder where your reports are saved.",
-         "Example: my-channel")
-    while True:
-        typed = ask("Nickname", "my-channel")
-        brand = slugify(typed)
-        if brand:
-            break
-        print("  Please use at least one letter or number, like my-channel.")
-    if brand != typed:
-        print(f"  Using: {brand}")
-    write_values(env.ENV_PATH, {"SCRAPECREATORS_API_KEY": scrape_key, "CONTENT_HOME": str(content_home)})
-    new_profile = not (content_home / brand / "brand" / "profile.md").exists()
-    profile, tracked, notion = create_brand(content_home, brand)
-
-    step(3, "Add the competitors you want to watch",
-         "Paste YouTube channels separated by commas. Handles or channel links both work.",
-         "Example: @nateherk, @nicksaraev",
-         "Press Enter to skip and add them later.")
-    while True:
-        try:
-            added = add_channels(tracked, ask("Channels"))
-            break
-        except ValueError as exc:
-            print(f"  {exc}. Please check the spelling and paste the list again.")
-    total = len(tracked_lib.load_tracked(tracked))
-    if added:
-        print(f"  Added {len(added)} channel(s). You're watching {total} in total.")
-    elif total:
-        print(f"  No new channels added. You're watching {total}.")
-    else:
-        print("  Skipped. You'll need at least one channel before your first report.")
-
-    if new_profile:
-        step(4, "Tell us about your channel",
-             "This helps the video ideas sound like you. Press Enter to skip any question.")
-        answers = {}
-        for key, question, example in PROFILE_QUESTIONS:
-            print(f"  {question} (example: {example})")
-            answers[key] = input("  > ").strip()
-        fill_profile(profile, answers)
-        print("  Saved. You can edit these answers any time in your profile file.")
-    else:
-        step(4, "Tell us about your channel", "You already have a channel profile, so this step is done.")
-
-    step(5, "Send reports to Notion (optional)",
-         "Reports are always saved on your computer. Notion is only if you also want them there.")
-    if yes("Set up Notion? (yes/no)"):
-        print(f"  1. Open {NOTION_URL} and create an integration. Copy its secret.")
-        print("  2. Paste the secret below. Like before, nothing will appear while you paste.")
-        notion_key = getpass.getpass("  Notion secret: ").strip()
-        print("  3. Open the Notion page where reports should go. Click ... then Connections, and add your integration.")
-        page_id = notion_page_id(ask("4. Paste that page's link"))
-        if notion_key and page_id:
-            write_values(env.ENV_PATH, {"NOTION_API_KEY": notion_key})
-            create_brand(content_home, brand, page_id)
-            print("  Notion is connected.")
-        else:
-            print("  Notion was skipped because the secret or page link was missing. Run setup again to add it later.")
-
-    todo = []
-    if not has_key:
-        todo.append(("Add your ScrapeCreators key. Run setup again when you have it:",
-                     f'python3 "{Path(__file__).resolve()}"'))
-    if not total:
-        todo.append(("Add at least one competitor, one per row, in:", str(tracked)))
-
-    print("\n" + "=" * 50)
-    print("  Almost done!" if todo else "  You're all set!")
-    print("=" * 50)
-    print(f"  Your key:      {'saved privately in ' + str(env.ENV_PATH) if has_key else 'not added yet'}")
-    print(f"  Competitors:   {total} channel(s), listed in {tracked}")
-    print(f"  Your profile:  {profile}")
-    if todo:
-        print("\nBefore your first report:")
-        for number, (what, where) in enumerate(todo, 1):
-            print(f"  {number}. {what}\n     {where}")
-    print("\n" + ("Then open" if todo else "Next: open") + " Claude Code and type")
-    print(f"  /youtube-outliers {brand}")
-    print("\nClaude will tell you the cost and ask before spending any credits.")
-    return 0
-
-
 def main(argv=None):
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--check", action="store_true", help="Check setup without revealing secrets")
-    parser.add_argument("--brand", default="", help="Brand slug to validate")
+    parser = argparse.ArgumentParser(description="YouTube Outliers setup helpers")
+    parser.add_argument("--check", action="store_true", help="Plain-text setup check (no network)")
+    parser.add_argument("--brand", default="", help="Brand for --check")
+    sub = parser.add_subparsers(dest="cmd")
+    k = sub.add_parser("key", help="Enter the ScrapeCreators key privately")
+    k.add_argument("--terminal", action="store_true", help="Ask in this terminal instead of a pop-up")
+    b = sub.add_parser("brand", help="Create or update a brand")
+    b.add_argument("--channel", help="Your channel link or @handle, or 'none'")
+    b.add_argument("--about", help="What you make now and want to make next")
+    b.add_argument("--add", default="", help="Competitors to add, comma-separated")
+    b.add_argument("--remove", default="", help="Competitors to remove, comma-separated")
+    b.add_argument("--notion-page", default="", help="Notion parent page link or ID")
+    b.add_argument("--name", default="", help="Brand folder name (defaults to your channel handle)")
+    v = sub.add_parser("verify-handles", help="Check YouTube handles exist (free)")
+    v.add_argument("handles")
+    s = sub.add_parser("status", help="JSON summary of setup")
+    s.add_argument("--brand", default="")
     args = parser.parse_args(argv)
-    return check(args.brand) if args.check else interactive()
+
+    try:
+        if args.check or not args.cmd:
+            return check(args.brand)
+        if args.cmd == "key":
+            return cmd_key(args.terminal)
+        if args.cmd == "brand":
+            if args.channel is None and not args.name:
+                raise ValueError("give --channel (or 'none') or --name")
+            return cmd_brand(args.channel, args.about, args.add, args.remove, args.notion_page, args.name)
+        if args.cmd == "verify-handles":
+            print(json.dumps(verify_handles(args.handles), indent=2))
+            return 0
+        if args.cmd == "status":
+            print(json.dumps(status(args.brand), indent=2))
+            return 0
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
