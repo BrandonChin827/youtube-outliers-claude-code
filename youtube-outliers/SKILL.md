@@ -49,7 +49,7 @@ For detailed onboarding and Notion setup, read `references/SETUP.md`. For secret
 The configured content root defaults to `~/Documents/Content`. Each brand needs:
 
 - `<content-root>/<brand>/brand/tracked-accounts/youtube.md`: Markdown table with `Handle`, `Category`, and `Notes` columns.
-- `<content-root>/<brand>/brand/profile.md`: audience, pillars, positioning, and title style.
+- `<content-root>/<brand>/brand/profile.md`: the user's channel, the content they make now and want to make going forward, and title style. Older profiles may use audience, pillars, and positioning sections instead.
 - Optional `<content-root>/<brand>/brand/notion.md`: `page_id: ...` for a parent page shared with the Notion integration.
 
 If the tracked table has no real channel rows, ask the user to add them and stop. Do not add competitors without approval.

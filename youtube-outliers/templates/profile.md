@@ -1,15 +1,10 @@
 # Brand profile
 
-## Channel name
+## My channel
 [FILL]
 
-## Audience
-[FILL]
-
-## Content pillars
-- [FILL]
-
-## Positioning
+## My content
+What I make now, and what I want to make going forward.
 [FILL]
 
 ## Title style
