@@ -23,7 +23,7 @@ A beginner goes from "I found this skill" to their first report while talking to
 
 ## User journey
 
-1. **Install.** The user pastes the repo link. Claude clones it to a temp folder, runs `python3 -m unittest`, runs `python3 install.py` (copy only, no prompts), then offers setup.
+1. **Install.** The user pastes the repo link. Claude clones it to a temp folder, runs `python3 -m unittest test_install -q` and `python3 -m unittest discover -s youtube-outliers/tests -t youtube-outliers -q`, runs `python3 install.py` (copy only, no prompts), then offers setup.
 2. **Step 1 of 4: Connect ScrapeCreators.** Claude explains the service in two lines with the sign-up link. When the user says "ready", Claude runs `setup.py key`. On macOS a pop-up asks for the key. The script checks it once with ScrapeCreators' credit-balance endpoint and saves it privately. Chat shows only the result: saved and working, rejected (offer to retry), cancelled, or couldn't be checked (saved anyway).
 3. **Step 2 of 4: About you.** Claude asks for the user's channel (link, @handle, or "don't have one yet"), then one sentence on what they make now and want to make next.
 4. **Step 3 of 4: Creators to watch.** The user pastes names or links, or says "help me find some". For suggestions, Claude web-searches the niche, keeps only handles it confirmed exist (`youtube.com/@handle` returns 200), and shows a numbered list with a one-line description of each. The user picks. The user's own channel is never tracked.

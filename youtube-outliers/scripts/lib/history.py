@@ -1,7 +1,9 @@
-"""history.json: per-video weekly view snapshots + first-reported dates.
+"""history.json: per-video view snapshots + first-reported dates.
 
-Snapshots are cheap (every fetched video, every run) and are the raw material
-for a future true same-age baseline. `reported` lets the report tag a video
+Snapshots are cheap (every fetched video, every run or `collect`) and are the
+raw material for a future true same-age baseline. Each keeps the exact UTC time
+and age in hours; a video gets at most one observation per UTC day (a later
+fetch that day replaces it). Older observations without those fields still load. `reported` lets the report tag a video
 'seen' when it already appeared in an earlier run — we tag, never hide.
 """
 
@@ -9,7 +11,9 @@ import json
 import sys
 from pathlib import Path
 
-from .scoring import age_days
+from datetime import timezone
+
+from .scoring import SCORING_METHOD, age_days
 
 
 def load(path):
@@ -41,19 +45,31 @@ def save(path, hist):
 
 
 def record(hist, videos, now, candidates):
-    """Append one observation per fetched video. Candidates carry their score."""
+    """Upsert today's (UTC) observation for every fetched video. Candidates carry their score."""
     scores = {c["id"]: c["score"] for c in candidates}
-    date = now.date().isoformat()
+    now_utc = now.astimezone(timezone.utc)
+    date = now_utc.date().isoformat()
     for v in videos:
         entry = hist["videos"].setdefault(v["id"], {
             "channel": v["channel"], "title": v["title"], "url": v["url"], "observations": [],
         })
-        entry["observations"].append({
+        age = age_days(v, now)
+        today = next((o for o in entry["observations"] if o.get("date") == date), {})
+        score = scores.get(v["id"])
+        if score is None:  # a later collect (no scoring) keeps the score today's run recorded
+            score = today.get("score")
+        obs = [o for o in entry["observations"] if o.get("date") != date]
+        obs.append({
             "date": date,
+            "observed_at": now_utc.isoformat(),
             "views": v["views"],
-            "age_days": round(age_days(v, now), 1),
-            "score": scores.get(v["id"]),
+            "age_days": round(age, 1),
+            "age_hours": round(age * 24, 1),
+            "score": score,
+            "score_version": SCORING_METHOD,
         })
+        obs.sort(key=lambda o: o.get("observed_at") or o.get("date", ""))
+        entry["observations"] = obs
 
 
 def mark_reported(hist, candidates, run_date):

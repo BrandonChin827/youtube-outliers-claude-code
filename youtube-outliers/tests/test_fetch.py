@@ -133,5 +133,22 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(v["url"], "https://www.youtube.com/watch?v=novid")
 
 
+    def test_fetch_transcript_requests_english(self):
+        with mock.patch("scripts.lib.fetch.sc_get", return_value={"transcript_only_text": "hello there"}) as m:
+            self.assertEqual(fetch.fetch_transcript("u", "key"), "hello there")
+        m.assert_called_once_with("/v1/youtube/video/transcript", {"url": "u", "language": "en"}, "key")
+
+    def test_fetch_transcript_falls_back_when_language_missing(self):
+        replies = [{"transcript_only_text": None, "transcript": None}, {"transcript_only_text": "hola"}]
+        with mock.patch("scripts.lib.fetch.sc_get", side_effect=replies) as m:
+            self.assertEqual(fetch.fetch_transcript("u", "key"), "hola")
+        self.assertEqual(m.call_args_list[1], mock.call("/v1/youtube/video/transcript", {"url": "u"}, "key"))
+
+    def test_fetch_transcript_any_language_makes_one_call(self):
+        with mock.patch("scripts.lib.fetch.sc_get", return_value={"transcript_only_text": "x"}) as m:
+            fetch.fetch_transcript("u", "key", language=None)
+        m.assert_called_once_with("/v1/youtube/video/transcript", {"url": "u"}, "key")
+
+
 if __name__ == "__main__":
     unittest.main()

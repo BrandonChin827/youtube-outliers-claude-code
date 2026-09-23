@@ -9,7 +9,8 @@ from scripts.lib import notes
 def cand(id_, score, channel, adjacent=False, views=10000, age=3.0):
     return {"id": id_, "title": f"Title {id_}", "url": f"https://youtu.be/{id_}", "channel": channel,
             "views": views, "age_days": age, "score": score, "tier": "breakout" if score >= 5 else "notable",
-            "thumbnail": "", "adjacent": adjacent, "seen": False}
+            "thumbnail": "", "adjacent": adjacent, "seen": False, "early": age < 1,
+            "confidence": "low" if age < 1 else "high"}
 
 
 PAYLOAD = {
@@ -118,6 +119,18 @@ class NotesTests(unittest.TestCase):
             self.assertIn("Token limits", rows[1])
             self.assertIn("https://youtu.be/a", rows[1])
             self.assertTrue(rows[4].split(",")[3] == "")  # video d has no topic
+
+    def test_write_csv_has_confidence_and_early_columns(self):
+        import csv
+        with tempfile.TemporaryDirectory() as d:
+            path = notes.write_csv(Path(d) / "r.csv", PAYLOAD, NOTES)
+            rows = list(csv.reader(path.open()))
+        self.assertEqual(rows[0][-2:], ["Confidence", "Early"])
+        self.assertEqual(rows[1][-2:], ["high", ""])
+        self.assertIn("Topic", rows[0])  # existing columns kept
+
+    def test_render_discord_shows_confidence(self):
+        self.assertIn("high confidence", notes.render_discord(PAYLOAD, NOTES))
 
     def test_render_discord_compact_with_trends_and_ideas(self):
         text = notes.render_discord(PAYLOAD, NOTES, notion_url="https://notion.so/x")
