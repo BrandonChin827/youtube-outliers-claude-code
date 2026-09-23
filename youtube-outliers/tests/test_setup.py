@@ -112,6 +112,7 @@ class SetupTests(unittest.TestCase):
                  mock.patch.dict(os.environ, {}, clear=False), \
                  mock.patch("builtins.input", lambda prompt="": next(answers)), \
                  mock.patch.object(setup.getpass, "getpass", return_value="secret-key-xyz"), \
+                 mock.patch.object(setup, "verify_key", return_value="valid"), \
                  redirect_stdout(output):
                 os.environ.pop("CONTENT_HOME", None)
                 code = setup.interactive()
@@ -126,6 +127,54 @@ class SetupTests(unittest.TestCase):
             handles = [r["handle"] for r in tracked_lib.load_tracked(brand / "tracked-accounts" / "youtube.md")]
             self.assertEqual(handles, ["@nateherk", "@nicksaraev"])
             self.assertIn("## My channel\n@mychannel\n", (brand / "profile.md").read_text())
+
+    def run_wizard(self, root, answers, keys, key_status):
+        answers, keys = iter(answers), iter(keys)
+        statuses = iter(key_status)
+        output = StringIO()
+        with mock.patch.object(setup.env, "ENV_PATH", root / "cfg" / ".env"), \
+             mock.patch.object(setup.env, "DEFAULT_CONTENT_HOME", root / "content"), \
+             mock.patch.dict(os.environ, {}, clear=False), \
+             mock.patch("builtins.input", lambda prompt="": next(answers)), \
+             mock.patch.object(setup.getpass, "getpass", lambda prompt="": next(keys)), \
+             mock.patch.object(setup, "verify_key", lambda key: next(statuses)), \
+             redirect_stdout(output):
+            os.environ.pop("CONTENT_HOME", None)
+            code = setup.interactive()
+        return code, output.getvalue()
+
+    def test_wizard_retries_rejected_key(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            code, text = self.run_wizard(root, ["my-channel", "@a", "", "", "no"],
+                                         ["typo-key", "good-key"], ["invalid", "valid"])
+            self.assertEqual(code, 0)
+            self.assertIn("didn't accept that key", text)
+            self.assertIn("You're all set!", text)
+            self.assertNotIn("typo-key", (root / "cfg" / ".env").read_text())
+            self.assertIn("good-key", (root / "cfg" / ".env").read_text())
+
+    def test_wizard_can_skip_key_and_finish_the_rest(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            code, text = self.run_wizard(root, ["my-channel", "@a", "", "", "no"], [""], [])
+            self.assertEqual(code, 0)
+            self.assertIn("Almost done!", text)
+            self.assertIn("Add your ScrapeCreators key", text)
+            self.assertTrue((root / "content" / "my-channel" / "brand" / "profile.md").exists())
+
+    def test_wizard_turns_typed_nickname_into_folder_name(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            code, text = self.run_wizard(root, ["My Channel!", "@a", "", "", "no"], ["k"], ["valid"])
+            self.assertIn("Using: my-channel", text)
+            self.assertIn("/youtube-outliers my-channel", text)
+            self.assertTrue((root / "content" / "my-channel").is_dir())
+
+    def test_slugify(self):
+        self.assertEqual(setup.slugify("  My Channel!! "), "my-channel")
+        self.assertEqual(setup.slugify("../etc"), "etc")
+        self.assertEqual(setup.slugify("!!!"), "")
 
     def test_validate_brand_rejects_paths(self):
         for value in ("../secret", "My Channel", "/tmp/x", "a_b"):

@@ -42,6 +42,10 @@ def main(argv=None):
     parser.add_argument("--target", type=Path, default=Path.home() / ".claude" / "skills" / "youtube-outliers")
     parser.add_argument("--no-setup", action="store_true", help="Install only; run the setup wizard later")
     args = parser.parse_args(argv)
+    if sys.version_info < (3, 9):
+        print("This skill needs Python 3.9 or newer. Get it at https://www.python.org/downloads/ and try again.",
+              file=sys.stderr)
+        return 1
     target = args.target.expanduser()
     source = Path(__file__).resolve().parent / "youtube-outliers"
     try:

@@ -11,7 +11,7 @@
 python3 ~/.claude/skills/youtube-outliers/scripts/setup.py
 ```
 
-5. Paste the key only when the terminal shows `ScrapeCreators API key (hidden):`. Input is not echoed.
+5. Paste the key only when the terminal shows `API key:`. Input is not echoed. Setup tests the key once with ScrapeCreators' credit-balance endpoint (at most 1 credit) and asks again if it is rejected. Press Enter to skip and add it later.
 
 The API authenticates through the `x-api-key` header. The skill reads the key from the process environment first, then from `~/.config/youtube-outliers/.env`. It never needs the key inside `SKILL.md` or a project repository.
 
@@ -30,6 +30,9 @@ The wizard also asks for your channel (optional) and a short description of the 
 
 ## Notion, optional
 
+Not required. Reports are always saved locally. The Notion MCP connector is not needed; the skill uses its own integration secret.
+
+
 1. Open <https://www.notion.so/profile/integrations>.
 2. Create an internal integration and copy its token.
 3. Open the intended parent page in Notion and add the integration under Connections.
@@ -43,7 +46,7 @@ The skill stores `NOTION_API_KEY` in the same private config file and writes onl
 python3 ~/.claude/skills/youtube-outliers/scripts/setup.py --check --brand "<brand>"
 ```
 
-The check reports whether secrets and input files exist but never prints secret values.
+The check reports whether secrets and input files exist. It makes no network calls and never prints secret values.
 
 ## Move or customize content storage
 

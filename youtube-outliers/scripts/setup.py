@@ -8,6 +8,8 @@ import re
 import stat
 import sys
 import tempfile
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -15,6 +17,7 @@ from scripts.lib import env, tracked as tracked_lib  # noqa: E402
 
 SIGNUP_URL = "https://app.scrapecreators.com/"
 NOTION_URL = "https://www.notion.so/profile/integrations"
+CREDIT_URL = "https://api.scrapecreators.com/v1/account/credit-balance"
 BRAND_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 HANDLE_RE = re.compile(r"^@[A-Za-z0-9._-]{1,100}$")
 
@@ -39,7 +42,7 @@ What I make now, and what I want to make going forward.
 
 TRACKED_TEMPLATE = """# Tracked YouTube channels
 
-Add one public YouTube handle per row. Do not include the @ symbol if you prefer not to; either form works.
+Add one public YouTube channel per row. `@handle` and `handle` both work.
 
 | Handle | Category | Notes |
 |---|---|---|
@@ -108,7 +111,7 @@ def parse_handles(raw):
             part = part.split("youtube.com/", 1)[1].split("/", 1)[0]
         handle = part if part.startswith("@") else f"@{part}"
         if not HANDLE_RE.fullmatch(handle):
-            raise ValueError(f"Not a valid YouTube handle: {part}")
+            raise ValueError(f"\"{part}\" is not a valid YouTube handle")
         handles.append(handle)
     return handles
 
@@ -134,6 +137,26 @@ def validate_brand(value):
     if not BRAND_RE.fullmatch(value):
         raise ValueError("Brand must use lowercase letters, numbers, and hyphens only.")
     return value
+
+
+def verify_key(key):
+    """Test a ScrapeCreators key once, during setup, with the credit-balance endpoint.
+
+    Returns "valid", "invalid", or "unknown" (network trouble). Never prints the key.
+    """
+    req = urllib.request.Request(CREDIT_URL, headers={"x-api-key": key, "User-Agent": "youtube-outliers/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=15):
+            return "valid"
+    except urllib.error.HTTPError as exc:
+        return "invalid" if exc.code in (401, 403) else "unknown"
+    except (urllib.error.URLError, OSError, TimeoutError):
+        return "unknown"
+
+
+def slugify(value):
+    """Turn a typed nickname like 'My Channel!' into 'my-channel'."""
+    return re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")[:63]
 
 
 def check(brand=""):
@@ -232,26 +255,41 @@ def interactive():
          f"1. Open {SIGNUP_URL} and sign up or log in.",
          "2. Copy your API key from the dashboard.",
          "3. Paste it below and press Enter.",
-         "Nothing will appear while you paste. That is normal and keeps your key private.")
+         "Nothing will appear while you paste. That is normal and keeps your key private.",
+         "No account yet? Press Enter to skip. You can add the key later.")
     scrape_key = None
-    if existing.get("SCRAPECREATORS_API_KEY") and not yes("You already saved a key. Replace it? (yes/no)"):
+    has_key = bool(existing.get("SCRAPECREATORS_API_KEY"))
+    if has_key and not yes("You already saved a key. Replace it? (yes/no)"):
         print("  OK, keeping your saved key.")
     else:
-        scrape_key = getpass.getpass("  API key: ").strip()
-        if not scrape_key:
-            print("\nNo key was pasted, so nothing was saved. Run setup again when you have your key.", file=sys.stderr)
-            return 1
-        print("  Got it. Your key will be saved privately on this computer.")
+        while True:
+            entered = getpass.getpass("  API key: ").strip()
+            if not entered:
+                print("  Skipped. Setup will remind you how to add it at the end.")
+                break
+            status = verify_key(entered)
+            if status == "invalid":
+                print("  ScrapeCreators didn't accept that key. Copy it again from the dashboard and paste it,")
+                print("  or press Enter to skip for now.")
+                continue
+            scrape_key, has_key = entered, True
+            if status == "valid":
+                print("  Key works. It will be saved privately on this computer.")
+            else:
+                print("  Couldn't reach ScrapeCreators to test the key, so it was saved as is.")
+            break
 
     step(2, "Pick a short nickname for your channel",
          "This names the folder where your reports are saved.",
-         "Use lowercase letters, numbers, and dashes only. Example: my-channel")
+         "Example: my-channel")
     while True:
-        try:
-            brand = validate_brand(ask("Nickname", "my-channel"))
+        typed = ask("Nickname", "my-channel")
+        brand = slugify(typed)
+        if brand:
             break
-        except ValueError:
-            print("  Please use only lowercase letters, numbers, and dashes, like my-channel.")
+        print("  Please use at least one letter or number, like my-channel.")
+    if brand != typed:
+        print(f"  Using: {brand}")
     write_values(env.ENV_PATH, {"SCRAPECREATORS_API_KEY": scrape_key, "CONTENT_HOME": str(content_home)})
     new_profile = not (content_home / brand / "brand" / "profile.md").exists()
     profile, tracked, notion = create_brand(content_home, brand)
@@ -301,13 +339,24 @@ def interactive():
         else:
             print("  Notion was skipped because the secret or page link was missing. Run setup again to add it later.")
 
+    todo = []
+    if not has_key:
+        todo.append(("Add your ScrapeCreators key. Run setup again when you have it:",
+                     f'python3 "{Path(__file__).resolve()}"'))
+    if not total:
+        todo.append(("Add at least one competitor, one per row, in:", str(tracked)))
+
     print("\n" + "=" * 50)
-    print("  You're all set!")
+    print("  Almost done!" if todo else "  You're all set!")
     print("=" * 50)
-    print(f"  Your key:      saved privately in {env.ENV_PATH}")
+    print(f"  Your key:      {'saved privately in ' + str(env.ENV_PATH) if has_key else 'not added yet'}")
     print(f"  Competitors:   {total} channel(s), listed in {tracked}")
     print(f"  Your profile:  {profile}")
-    print("\nNext: open Claude Code and type")
+    if todo:
+        print("\nBefore your first report:")
+        for number, (what, where) in enumerate(todo, 1):
+            print(f"  {number}. {what}\n     {where}")
+    print("\n" + ("Then open" if todo else "Next: open") + " Claude Code and type")
     print(f"  /youtube-outliers {brand}")
     print("\nClaude will tell you the cost and ask before spending any credits.")
     return 0
