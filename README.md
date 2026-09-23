@@ -2,46 +2,50 @@
 
 A shareable Claude Code skill for weekly YouTube competitor research. It uses ScrapeCreators to score recent long-form uploads against each channel's own baseline, groups breakouts by topic, analyzes the top five, and creates Markdown, CSV, and optional Notion reports.
 
-## Install from GitHub
+## Quick start
+
+Requirements: Claude Code, Python 3.9 or newer, git, and a free [ScrapeCreators](https://app.scrapecreators.com/) account. Copy your API key from its dashboard first.
+
+In a terminal:
 
 ```bash
-git clone https://github.com/alexcruz80827/youtube-outliers-claude-code.git
+git clone https://github.com/BrandonChin827/youtube-outliers-claude-code.git
 cd youtube-outliers-claude-code
 python3 install.py
-python3 ~/.claude/skills/youtube-outliers/scripts/setup.py
 ```
 
-Then restart Claude Code if needed and run `/youtube-outliers my-channel`.
+The installer copies the skill into `~/.claude/skills/` and then asks a few questions:
 
-## Install from a downloaded ZIP
+1. Your ScrapeCreators API key (typed into a hidden prompt, stored privately at `~/.config/youtube-outliers/.env`)
+2. A brand name, for example `my-channel`
+3. Competitor YouTube channels, separated by commas, for example `@nateherk, @nicksaraev`
+4. Whether to set up Notion (optional)
 
-Requirements: Claude Code, Python 3.9 or newer, and a ScrapeCreators account.
-
-1. Download and unzip this folder.
-2. Open Terminal in the unzipped folder.
-3. Run:
-
-```bash
-python3 install.py
-```
-
-4. Run the private setup wizard:
-
-```bash
-python3 ~/.claude/skills/youtube-outliers/scripts/setup.py
-```
-
-The wizard links to ScrapeCreators, accepts the API key through hidden terminal input, stores it outside the skill at `~/.config/youtube-outliers/.env`, sets permissions to `600`, and creates starter brand files. The API key is never placed in chat or inside the shareable skill folder.
-
-5. Add competitor channels to the generated `tracked-accounts/youtube.md` file and fill in `profile.md`.
-6. Restart Claude Code if `~/.claude/skills/` did not exist before installation.
-7. Run:
+Then describe your channel in the `profile.md` file it prints, and in Claude Code run:
 
 ```text
 /youtube-outliers my-channel
 ```
 
-The workflow is intentionally manual-only because scans spend credits and Notion publishing changes an external page.
+Restart Claude Code first if the skill does not show up.
+
+### Or let Claude install it
+
+Paste this into Claude Code:
+
+```text
+Install the Claude Code skill at https://github.com/BrandonChin827/youtube-outliers-claude-code.
+Clone it to a temporary folder, run its offline tests, then run `python3 install.py --no-setup`.
+Then tell me to run the setup wizard myself in a terminal. Never ask for my API key in chat.
+```
+
+### Install from a downloaded ZIP
+
+Unzip the folder, open a terminal inside it, and run `python3 install.py`.
+
+### Updating
+
+Run `python3 install.py` again from a fresh copy. The old version moves to `~/.claude/skill-backups/`, and your key, brand files, and reports are kept. Use `--no-setup` to skip the questions.
 
 ## Safe API-key setup
 

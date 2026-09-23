@@ -11,11 +11,12 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from scripts.lib import env  # noqa: E402
+from scripts.lib import env, tracked as tracked_lib  # noqa: E402
 
 SIGNUP_URL = "https://app.scrapecreators.com/"
 NOTION_URL = "https://www.notion.so/profile/integrations"
 BRAND_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+HANDLE_RE = re.compile(r"^@[A-Za-z0-9._-]{1,100}$")
 
 PROFILE_TEMPLATE = """# Brand profile
 
@@ -100,6 +101,37 @@ def create_brand(content_home, brand, notion_page_id=""):
     if notion_page_id:
         notion.write_text(f"page_id: {notion_page_id.strip()}\n")
     return profile, tracked, notion
+
+
+def parse_handles(raw):
+    handles = []
+    for part in raw.replace("\n", ",").split(","):
+        part = part.strip().rstrip("/")
+        if not part:
+            continue
+        if "youtube.com/" in part:
+            part = part.split("youtube.com/", 1)[1].split("/", 1)[0]
+        handle = part if part.startswith("@") else f"@{part}"
+        if not HANDLE_RE.fullmatch(handle):
+            raise ValueError(f"Not a valid YouTube handle: {part}")
+        handles.append(handle)
+    return handles
+
+
+def add_channels(tracked, raw):
+    """Append new handles to the tracked table, skipping ones already listed."""
+    seen = {row["handle"].lower() for row in tracked_lib.load_tracked(tracked)}
+    added = []
+    for handle in parse_handles(raw):
+        if handle.lower() not in seen:
+            seen.add(handle.lower())
+            added.append(handle)
+    if added:
+        text = tracked.read_text()
+        if not text.endswith("\n"):
+            text += "\n"
+        tracked.write_text(text + "".join(f"| {h} |  |  |\n" for h in added))
+    return added
 
 
 def validate_brand(value):
@@ -200,6 +232,17 @@ def interactive():
     write_values(env.ENV_PATH, updates)
     profile, tracked, notion = create_brand(content_home, brand, notion_page)
 
+    print("\nWhich competitor channels should be tracked?")
+    while True:
+        raw = ask("Paste YouTube handles separated by commas, or leave blank to add them later")
+        try:
+            added = add_channels(tracked, raw)
+            break
+        except ValueError as exc:
+            print(exc)
+    total = len(tracked_lib.load_tracked(tracked))
+    print(f"Added {len(added)} channel(s). {total} tracked in total.")
+
     print("\nSetup saved safely.")
     print(f"Config: {env.ENV_PATH} (permissions 600)")
     print(f"Brand profile: {profile}")
@@ -207,8 +250,8 @@ def interactive():
     if notion_page:
         print(f"Notion config: {notion}")
         print("In Notion, share the parent page with the integration before publishing.")
-    print("\nNext: fill in the profile and add competitor rows, then run:")
-    print(f"python3 \"{Path(__file__).resolve()}\" --check --brand \"{brand}\"")
+    print("\nNext: describe your channel in the profile file above, then in Claude Code run:")
+    print(f"/youtube-outliers {brand}")
     return 0
 
 

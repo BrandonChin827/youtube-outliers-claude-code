@@ -5,7 +5,7 @@
 1. Open <https://app.scrapecreators.com/>.
 2. Create an account or sign in.
 3. Copy the API key from the dashboard.
-4. In a normal terminal, run:
+4. In a normal terminal, run `python3 install.py` from the repository (it starts the wizard automatically), or rerun the wizard later with:
 
 ```bash
 python3 ~/.claude/skills/youtube-outliers/scripts/setup.py
@@ -24,7 +24,9 @@ The setup wizard creates:
 <CONTENT_HOME>/<brand>/brand/tracked-accounts/youtube.md
 ```
 
-Fill the profile with the channel's actual audience, pillars, positioning, and title style. Add one approved public competitor handle per table row. Empty tables are rejected.
+The wizard asks for competitor handles (comma-separated; `@handle`, `handle`, or a `youtube.com/@handle` link all work) and adds any that are not already in the table. You can also edit the table directly, one handle per row. Empty tables are rejected.
+
+Fill the profile with the channel's actual audience, pillars, positioning, and title style.
 
 ## Notion, optional
 
