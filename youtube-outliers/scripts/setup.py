@@ -28,6 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from scripts.lib import env, tracked as tracked_lib  # noqa: E402
+from scripts.lib.scoring import DEFAULT_RANGE, RANGES  # noqa: E402
 
 CREDIT_URL = "https://api.scrapecreators.com/v1/account/credit-balance"
 BRAND_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
@@ -48,6 +49,9 @@ PROFILE_TEMPLATE = """# Brand profile
 
 ## My content
 [FILL]
+
+## Report range
+week
 
 ## Title style
 - Clear promise
@@ -300,8 +304,11 @@ def own_handle(channel):
     return parse_handles(channel)[0]
 
 
-def cmd_brand(channel=None, about=None, add="", remove="", notion_page="", name=""):
+def cmd_brand(channel=None, about=None, add="", remove="", notion_page="", name="", report_range=""):
     content_home = env.content_home()
+    report_range = (report_range or "").strip().lower()
+    if report_range and report_range not in RANGES:
+        raise ValueError(f"range must be one of {', '.join(RANGES)}")
     own = own_handle(channel) if channel is not None else ""
     brand = validate_brand(name or slugify(own[1:]) or "my-channel")
     page = notion_page_id(notion_page) if notion_page else ""
@@ -315,6 +322,8 @@ def cmd_brand(channel=None, about=None, add="", remove="", notion_page="", name=
         own = own_handle(saved) if "youtube.com/@" in saved or saved.startswith("@") else ""
     if about:
         set_section(profile, "My content", about)
+    if report_range:
+        set_section(profile, "Report range", report_range)
     competitors = [h for h in parse_handles(add) if h.lower() != own.lower()] if add else []
     skipped_own = bool(add) and own and any(h.lower() == own.lower() for h in parse_handles(add))
     removed = remove_channels(tracked, parse_handles(remove)) if remove else 0  # first, so a swap fits under the cap
@@ -366,9 +375,16 @@ def brand_summary(content_home, brand):
         "tracked": len(handles),
         "handles": handles,
         "notion_page": page,
+        "range": saved_range(profile),
         "profile_path": str(profile),
         "tracked_path": str(tracked),
     }
+
+
+def saved_range(profile):
+    """The profile's Report range; profiles from before v1.2 (or with a typo) count as the default."""
+    value = read_section(profile, "Report range").strip().lower() if profile.exists() else ""
+    return value if value in RANGES else DEFAULT_RANGE
 
 
 def list_brands(content_home):
@@ -441,6 +457,7 @@ def main(argv=None):
     b.add_argument("--remove", default="", help="Competitors to remove, comma-separated")
     b.add_argument("--notion-page", default="", help="Notion parent page link or ID")
     b.add_argument("--name", default="", help="Brand folder name (defaults to your channel handle)")
+    b.add_argument("--range", default="", help="Default report range: week, month, 3months or 6months")
     v = sub.add_parser("verify-handles", help="Check YouTube handles exist (free)")
     v.add_argument("handles")
     s = sub.add_parser("status", help="JSON summary of setup")
@@ -455,7 +472,7 @@ def main(argv=None):
         if args.cmd == "brand":
             if args.channel is None and not args.name:
                 raise ValueError("give --channel (or 'none') or --name")
-            return cmd_brand(args.channel, args.about, args.add, args.remove, args.notion_page, args.name)
+            return cmd_brand(args.channel, args.about, args.add, args.remove, args.notion_page, args.name, args.range)
         if args.cmd == "verify-handles":
             print(json.dumps(verify_handles(args.handles), indent=2))
             return 0

@@ -1,7 +1,7 @@
 ---
 name: youtube-outliers
-description: Finds weekly YouTube competitor breakouts and turns them into channel-specific video ideas. Use for competitor outliers, niche trends, or deciding what YouTube video to make next.
-version: 1.1.0
+description: Finds YouTube competitor breakouts (this week up to the last 6 months) and turns them into channel-specific video ideas. Use for competitor outliers, niche trends, or deciding what YouTube video to make next.
+version: 1.2.0
 author: Brandon Chin
 license: MIT
 argument-hint: "[brand-name]"
@@ -12,7 +12,7 @@ allowed-tools: Bash(python3 *) Read Write Edit WebSearch
 
 # YouTube Outliers
 
-Run a weekly, evidence-led competitor report. The bundled Python scorer fetches public YouTube data through ScrapeCreators, compares each recent long-form upload with that creator's own baseline, and writes Markdown, JSON, and CSV reports. Claude can also publish the report to Notion through the user's Notion connector.
+Run an evidence-led competitor report over this week, this month, 3 months, or 6 months. The bundled Python scorer fetches public YouTube data through ScrapeCreators, compares each long-form upload with that creator's own nearby uploads, and writes Markdown, JSON, and CSV reports. Claude can also publish the report to Notion through the user's Notion connector.
 
 The people using this skill are often beginners. Talk in plain language, ask one question per message, and never show them script output, JSON, or file paths unless they ask. This skill is manual-only because scans spend credits. Never invent channels, scores, transcript evidence, or API results.
 
@@ -57,12 +57,23 @@ The first word of the output is the result:
 
 1. Ask: "What's your YouTube channel? Paste the link or @handle, or say you don't have one yet."
 2. Ask: "In a sentence or two, what kind of videos do you make now, and what do you want to make next?"
+3. Ask how far back reports should look, and suggest one based on their answer. If their videos are **timely** (news, new tools, trends that go stale fast), suggest this week. If they're **evergreen** (challenges, experiments, stories, tutorials that stay useful for months), suggest 6 months. If you can't tell, suggest this month. Show it like this, with your suggestion marked:
 
-Then save both:
+   > **How far back should your reports look?**
+   > 1. This week *(best for news and new tools)*
+   > 2. This month
+   > 3. 3 months
+   > 4. 6 months *(best for challenges and evergreen videos)*
+   >
+   > I'd suggest **6 months** because your videos stay relevant for a long time. You can change this any time.
+
+   Map their answer to `week`, `month`, `3months`, or `6months`.
+
+Then save all three:
 
 ```bash
 SKILL_DIR="${CLAUDE_SKILL_DIR:-$HOME/.claude/skills/youtube-outliers}"
-python3 "$SKILL_DIR/scripts/setup.py" brand --channel "<link, @handle, or none>" --about "<their words>"
+python3 "$SKILL_DIR/scripts/setup.py" brand --channel "<link, @handle, or none>" --about "<their words>" --range "<week, month, 3months, or 6months>"
 ```
 
 The output JSON includes `name` (the folder, derived from their handle). Remember it for later commands; don't ask the user to choose one. If the command prints `error:`, explain it plainly and ask again.
@@ -106,14 +117,14 @@ Check whether a Notion connector is available in this session (tools such as `no
 
 ### Wrap-up
 
-Show a short summary: their channel, how many creators are tracked, and where reports go (on this computer, plus Notion if set). Then offer the first report with its cost: about one ScrapeCreators credit per tracked channel plus 5 to 10 for transcripts (a video with no English transcript costs one extra), so 30 creators is about 35 to 40 credits. Only run it after they say yes.
+Show a short summary: their channel, how many creators are tracked, how far back reports look (the range they picked), and where reports go (on this computer, plus Notion if set). Say they can ask for this week, this month, 3 months, or 6 months any time, or change the default. Then offer the first report with its cost: about one ScrapeCreators credit per tracked channel plus 5 to 10 for transcripts (a video with no English transcript costs one extra), so 30 creators is about 35 to 40 credits. Only run it after they say yes.
 
 ## Files
 
 Brand files live in `<content-root>/<brand>/brand/` (content root defaults to `~/Documents/Content`):
 
 - `tracked-accounts/youtube.md`: table of tracked channels.
-- `profile.md`: their channel, what they make now and want to make, and title style. Older profiles may use audience, pillars, and positioning sections instead.
+- `profile.md`: their channel, what they make now and want to make, the default `Report range` (`week`, `month`, `3months`, or `6months`; set it with `setup.py brand --range`), and title style. Older profiles may use audience, pillars, and positioning sections instead, and count as `week` when they have no range.
 - `notion.md` (optional): `page_id: ...` for the Notion parent page.
 
 Change these through `setup.py brand`, not by hand, so handles stay clean. Never add creators without the user's OK.
@@ -122,16 +133,18 @@ Change these through `setup.py brand`, not by hand, so handles stay clean. Never
 
 ### 1. Run the scorer
 
-This spends about one ScrapeCreators credit per tracked channel. The window doesn't change the cost.
+This spends about one ScrapeCreators credit per tracked channel. The range doesn't change the cost.
 
 ```bash
 SKILL_DIR="${CLAUDE_SKILL_DIR:-$HOME/.claude/skills/youtube-outliers}"
 python3 "$SKILL_DIR/scripts/outliers.py" run "<brand>"
 ```
 
-The default window is the last 7 days. If the user asks for a longer look-back (for example "the last 30 days" or "this month"), add `--days N` with N from 7 to 30. A scan sees only about 30 recent uploads per channel, so creators who post daily can't be scored on long windows; their skip note says so. Tell the user plainly and offer the default window for them. Scores compare each video with what that channel's typical video has at the same age, so a 2-day-old and a 20-day-old video are judged fairly.
+With no flag it uses the brand's saved range. If the user asks for a different look-back, add `--range week`, `--range month`, `--range 3months`, or `--range 6months` ("this month" means `month`, "last quarter" means `3months`, and so on). Only use `--days N` (7 to 180) for an exact number they ask for.
 
-Read the emitted JSON data path. It contains up to 30 ranked candidates and channel coverage notes. If no videos clear the threshold, report that honestly and stop.
+A scan sees each creator's ~30 most recent uploads, never more. For creators who post a lot, those 30 may not reach back through a long range; the report adds a coverage note ("only covers the last N days") and still scores what it has. Mention it plainly if it affects a creator they care about. Scores compare each video with that creator's nearby uploads at the same age, so slow uploaders are scored fairly and a 2-day-old and a 90-day-old video are judged on equal terms.
+
+Read the emitted JSON data path. It contains up to 60 ranked candidates, a free `by_range` audit (how many outliers and the best videos this week, this month, 3 months, and 6 months, up to the chosen range), and channel coverage notes. If no videos clear the threshold, report that honestly and stop.
 
 ### 2. Create the notes skeleton
 
@@ -147,6 +160,7 @@ Save the output as `<run-date>-notes.json` in the report directory. The complete
   "recommended_title": "one strongest title to make next",
   "week_in_one_line": "one useful sentence",
   "clusters": [{"topic": "topic", "trend": true, "video_ids": ["id"]}],
+  "relevance": {"id": "high"},
   "breakdowns": [{
     "video_id": "id",
     "hook": "opening hook",
@@ -162,9 +176,27 @@ Save the output as `<run-date>-notes.json` in the report directory. The complete
 
 Assign every candidate ID to exactly one primary-topic cluster. Singletons are allowed. Order clusters by their highest score. Set `trend` to `true` only when at least three distinct channels cover the topic.
 
-### 4. Analyze the top five
+### 3b. Rate relevance and get the shortlist
 
-Use the highest-scoring five non-adjacent videos unless fewer than five exist. Fetch each transcript:
+Label every candidate in `relevance` by how well the idea fits this brand, judged against `profile.md` (what they make, what they want to make next, and Avoid):
+
+- `high`: they could credibly make this next.
+- `medium`: adjacent; it would need a real twist.
+- `low`: off their niche.
+
+Relevance only picks which five videos get breakdowns. Every table and the CSV still list all outliers by score, so people can spot formats outside their niche. Then save the notes file and run (free):
+
+```bash
+SKILL_DIR="${CLAUDE_SKILL_DIR:-$HOME/.claude/skills/youtube-outliers}"
+CONTENT_HOME="${CONTENT_HOME:-$HOME/Documents/Content}"
+python3 "$SKILL_DIR/scripts/outliers.py" shortlist "<brand>" --notes "$CONTENT_HOME/<brand>/research/youtube-outliers/<run-date>-notes.json"
+```
+
+It prints the five videos to analyze: most relevant first, then highest score, with at most three from any one creator, skipping adjacent-niche creators unless there aren't enough. Replace the skeleton's `breakdowns` with these five.
+
+### 4. Analyze the shortlist
+
+Use the five videos `shortlist` printed. Fetch each transcript:
 
 ```bash
 SKILL_DIR="${CLAUDE_SKILL_DIR:-$HOME/.claude/skills/youtube-outliers}"
@@ -198,7 +230,7 @@ python3 "$SKILL_DIR/scripts/outliers.py" publish "<brand>" --notes "$CONTENT_HOM
 1. Before the first-ever Notion publish for a brand, ask the user once to confirm.
 2. Read `<run-date>-notion.md` (the `Notion page:` path printed by `publish`). It is the finished page body in Notion-flavored Markdown. Send it exactly as written: don't rewrite, reorder, summarize, or convert it, so the page looks the same on every device.
 3. Check `<run-date>-notion.json` in the report folder. If it has a `page_id`, replace that page's content with the file instead of creating a new page.
-4. Otherwise create a child page under the saved `page_id` with the connector's create-pages tool. Title: the one printed by `publish` (`Outliers: <brand>: <run-date>`). Icon: 🎯. Content: the file.
+4. Otherwise create a child page under the saved `page_id` with the connector's create-pages tool. Title: the one printed by `publish` (`Outliers: <brand>: <run-date>`, plus the range, such as `(1 month)` or `(6 months)`, for anything longer than a week). Icon: 🎯. Content: the file.
 5. Save `{"page_id": "...", "url": "..."}` to `<run-date>-notion.json` so revisions update the same page.
 
 If the connector isn't available or the page can't be found, keep the local report, say so in one line, and continue.
@@ -216,15 +248,15 @@ That prints the cost and fetches nothing. Tell the user the cost (about one cred
 
 ## Output contract
 
-- Recommended title near the top of the local report and the chat summary. The Notion page follows its fixed layout from `notion_page.py`, which starts with the top-five table.
+- Recommended title near the top of the local report and the chat summary. The Notion page follows its fixed layout from `notion_page.py`: the top-five table, then a `By time range` table, then topic tables.
 - Top-five table starts with clickable `Video`, then `Creator`, then `Score`.
 - `Why it worked` uses concise bullets.
-- Remaining candidates are grouped into topic tables with `Video`, `Channel`, `Score`, `Views`, `Age`, `#`, and `Tag`.
-- Standard baseline: the channel's 15 most recent eligible long-form videos aged from the end of the window (at least 14 days) to 180 days, and at least five of them.
-- Sparse baseline: when fewer than five exist, the 15 most recent from the end of the window to 365 days, at least three, explicitly labeled `sparse baseline`.
+- Remaining candidates are grouped into topic tables with `Video`, `Channel`, `Score`, `Views`, `Age`, `#`, and `Tag`, ordered by score. The CSV adds a `Range` column (the shortest range each video falls in). There is no relevance column anywhere.
+- Baseline: for each video, the 15 long-form uploads from the same creator closest to it in publish date, excluding the video itself and uploads under 3 days old, from the creator's ~30 most recent uploads. At least five make a standard baseline; three or four are labeled `sparse baseline`.
+- Coverage: when a creator's ~30 uploads don't span the whole range, the report says how many days they cover. Never claim a range was fully covered when it wasn't.
 - A score is the video's views divided by what the channel's typical video has at the same age. The age adjustment uses a general view curve, not yet this channel's own history, so say "age-adjusted", not "same-age".
 - `early` marks videos under 24 hours old. Every score carries `high`, `medium`, or `low confidence` (low when early or sparse; high needs 8+ baseline videos and a video at least 3 days old). Mention low confidence when you recommend a video. Labels never hide a video.
-- Never fabricate a score when neither baseline is reliable.
+- Never fabricate a score when a video has fewer than three comparable uploads.
 - Exclude Shorts, livestreams, and videos longer than three hours.
 
 ## Verification
@@ -233,7 +265,7 @@ Before reporting completion:
 
 1. Confirm `publish` exits successfully.
 2. Confirm the Markdown Notes placeholder is gone.
-3. Confirm every candidate ID appears in exactly one cluster.
+3. Confirm every candidate ID appears in exactly one cluster and has a `relevance` label, and that the breakdowns match `shortlist` (or say why you swapped one).
 4. Confirm generated copy has no em dashes except literal source titles.
 5. If Notion was used, confirm the page URL works and `<run-date>-notion.json` holds its ID, so revisions reuse it.
 6. Give the user the compact summary, the Notion link if any, and where the report files are.

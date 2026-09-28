@@ -12,8 +12,14 @@ Schema:
   "clusters": [{"topic": "...", "trend": true, "video_ids": ["id", ...]}],
   "breakdowns": [{"video_id": "id", "hook": "...", "why": ["...", "..."],
                   "copyable": "yes" | "partly" | "no", "copyable_note": "...",
-                  "titles": ["...", "...", "..."]}]
+                  "titles": ["...", "...", "..."]}],
+  "relevance": {"video_id": "high" | "medium" | "low"}
 }
+
+`relevance` is the agent's judgment of how well each video fits the brand's
+own content (profile.md). It only decides which 5 videos get breakdowns
+(`shortlist`); every table and the CSV stay ordered by score so people see all
+the data and can try formats outside their niche.
 """
 
 import csv
@@ -22,10 +28,13 @@ import re
 from pathlib import Path
 
 from .report import coverage_note_label, fmt_line, fmt_views, generated_text
+from .scoring import RANGE_LABELS, range_bucket
 
 PLACEHOLDER = "_(The agent fills this section: topic clusters, copyable/adjacent calls, and top-5 breakdowns.)_"
 LEGACY_PLACEHOLDER = "_(Claude fills this section: topic clusters, copyable/adjacent calls, and top-5 breakdowns.)_"
 DISCORD_LIMIT = 1900  # keep under Discord's 2000-char message ceiling
+RELEVANCE = ("high", "medium", "low")
+MAX_PER_CREATOR = 3  # top-5 picks allowed from one channel
 
 
 def load(path):
@@ -60,7 +69,46 @@ def validate(notes):
             problems.append(f"breakdowns[{i}].why must be a non-empty list of non-empty strings")
         if not isinstance(b.get("titles", []), list):
             problems.append(f"breakdowns[{i}].titles must be a list")
+    rel = notes.get("relevance", {})
+    if not isinstance(rel, dict):
+        problems.append("relevance must be an object of video_id: high|medium|low")
+    else:
+        bad = [k for k, v in rel.items() if str(v or "").lower() not in RELEVANCE + ("",)]
+        if bad:
+            problems.append(f"relevance must be high|medium|low (bad: {', '.join(bad)})")
     return problems
+
+
+def missing_relevance(notes, candidates):
+    """Candidate ids with no relevance label; they count as medium."""
+    rel = notes.get("relevance") or {}
+    return [c["id"] for c in candidates if not str(rel.get(c["id"]) or "").strip()]
+
+
+def rank_key(c, relevance):
+    """Relevance first (unlabelled = medium), then score, views, id."""
+    fit = str(relevance.get(c["id"]) or "medium").lower()
+    return (RELEVANCE.index(fit) if fit in RELEVANCE else 1, -c["score"], -c["views"], c["id"])
+
+
+def shortlist(candidates, relevance, n=5, per_creator=MAX_PER_CREATOR):
+    """The n videos to break down: most relevant first, then highest score.
+
+    At most `per_creator` picks per channel, so one prolific creator can't fill
+    the whole top 5, and adjacent-niche creators only when there aren't enough
+    others. Both limits relax (in that order) rather than return fewer than n.
+    """
+    ordered = sorted(candidates, key=lambda c: rank_key(c, relevance))
+    core = [c for c in ordered if not c.get("adjacent")]
+    pool = core if len(core) >= n else ordered
+    picked, counts = [], {}
+    for c in pool:
+        if counts.get(c["channel"], 0) < per_creator:
+            picked.append(c)
+            counts[c["channel"]] = counts.get(c["channel"], 0) + 1
+        if len(picked) == n:
+            return picked
+    return picked + [c for c in pool if c not in picked][:n - len(picked)]
 
 
 def skeleton(payload, top_n=5):
@@ -72,6 +120,7 @@ def skeleton(payload, top_n=5):
         "recommended_title": "",
         "week_in_one_line": "",
         "clusters": [{"topic": "", "trend": False, "video_ids": [c["id"] for c in cands]}],
+        "relevance": {c["id"]: "" for c in cands},
         "breakdowns": [{"video_id": c["id"], "_title": c["title"], "hook": "", "why": [],
                         "copyable": "yes", "copyable_note": "", "titles": ["", "", ""]} for c in top],
     }
@@ -140,11 +189,13 @@ def write_csv(path, payload, notes):
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["Rank", "Score", "Tier", "Topic", "Channel", "Title", "Views", "Age (days)",
+        w.writerow(["Rank", "Score", "Tier", "Topic", "Channel", "Title", "Views", "Age (days)", "Range",
                     "Adjacent", "Seen before", "Link", "Thumbnail", "Confidence", "Early"])
         for i, c in enumerate(payload["candidates"], 1):
+            bucket = c.get("range") or range_bucket(c["age_days"])
             w.writerow([i, f"{c['score']}x", c["tier"], tmap.get(c["id"], ""), c["channel"], c["title"], c["views"],
-                        c["age_days"], "yes" if c.get("adjacent") else "", "yes" if c.get("seen") else "",
+                        c["age_days"], RANGE_LABELS.get(bucket, ""),
+                        "yes" if c.get("adjacent") else "", "yes" if c.get("seen") else "",
                         c["url"], c.get("thumbnail", ""), c.get("confidence", ""), "yes" if c.get("early") else ""])
     return path
 

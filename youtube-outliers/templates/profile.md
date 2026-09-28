@@ -6,6 +6,9 @@
 ## My content
 [FILL]
 
+## Report range
+week
+
 ## Title style
 - Clear promise
 - Specific result

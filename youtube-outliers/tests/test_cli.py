@@ -65,10 +65,13 @@ class CliTests(unittest.TestCase):
         self.assertTrue(out["candidates"][1]["adjacent"])
         self.assertFalse(out["candidates"][0]["seen"])
         reasons = {s["handle"]: s["reason"] for s in out["skipped"]}
-        self.assertIn("@thin", reasons)
-        self.assertIn("no reliable baseline", reasons["@thin"])
-        self.assertIn("14–365 days", reasons["@thin"])
+        # @thin has too few neighbours to score its hit, but it is evaluated, not skipped
+        self.assertNotIn("@thin", reasons)
+        self.assertFalse(any(c["channel"] == "@thin" for c in out["candidates"]))
         self.assertIn("@dead", reasons)
+        self.assertEqual((out["range"], out["range_label"], out["days"]), ("week", "This week", 7))
+        self.assertEqual(out["by_range"]["week"]["count"], 3)
+        self.assertEqual(out["coverage"]["@good"], 70.0)
         root = Path(self.tmp.name) / "brandonbuilds" / "research" / "youtube-outliers"
         self.assertTrue((root / "2026-09-21.json").exists())
         self.assertTrue((root / "2026-09-21.md").exists())
@@ -84,8 +87,10 @@ class CliTests(unittest.TestCase):
     def test_days_out_of_range_exits_before_fetching(self):
         with mock.patch("scripts.outliers.load_api_key") as key, \
                 mock.patch("scripts.outliers.fetch.fetch_channel_videos") as fetch_videos:
-            self.assertEqual(outliers.main(["run", "brandonbuilds", "--days", "31"]), 1)
+            self.assertEqual(outliers.main(["run", "brandonbuilds", "--days", "181"]), 1)
             self.assertEqual(outliers.main(["run", "brandonbuilds", "--days", "3"]), 1)
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                outliers.main(["run", "brandonbuilds", "--range", "year"])
         key.assert_not_called()
         fetch_videos.assert_not_called()
 
@@ -99,7 +104,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(week["candidates"], [])
         self.assertEqual([c["id"] for c in month["candidates"]], ["@good_wk3"])
         md = Path(month["paths"]["md"]).read_text()
-        self.assertIn("window: last 30 days", md)
+        self.assertIn("range: This month", md)
+        self.assertIn("## By time range", md)
 
     def test_collect_without_confirmation_fetches_nothing(self):
         buf = io.StringIO()
@@ -151,12 +157,15 @@ class CliTests(unittest.TestCase):
         self.assertEqual(len(obs), 1)
         self.assertIsNotNone(obs[0]["score"])
 
-    def test_long_window_skip_suggests_shorter_window(self):
+    def test_daily_uploader_on_long_range_gets_coverage_note_and_is_still_scored(self):
         def daily(handle, api_key):  # 30 uploads, one a day: nothing older than 30 days
-            return [typical(handle, f"{handle}_{i}", 0.6 + i) for i in range(30)] if handle == "@good" else []
-        out = outliers.run("brandonbuilds", NOW, "key", days=30, fetch_fn=daily)
+            if handle != "@good":
+                return []
+            return [typical(handle, f"{handle}_{i}", 0.6 + i) for i in range(29)] + [typical(handle, "hit", 12, 6)]
+        out = outliers.run("brandonbuilds", NOW, "key", days=180, fetch_fn=daily)
         reason = {s["handle"]: s["reason"] for s in out["skipped"]}["@good"]
-        self.assertIn("try --days 7", reason)
+        self.assertIn("only covers the last 28 days", reason)
+        self.assertEqual([c["id"] for c in out["candidates"]], ["hit"])
         week = outliers.run("brandonbuilds", NOW, "key", fetch_fn=daily)
         self.assertNotIn("@good", {s["handle"] for s in week["skipped"]})
 

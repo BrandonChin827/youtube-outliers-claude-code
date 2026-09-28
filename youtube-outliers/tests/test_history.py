@@ -36,7 +36,7 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(obs["observed_at"], "2026-09-21T12:00:00+00:00")
         self.assertEqual(obs["age_hours"], 84.0)
         self.assertEqual(obs["age_days"], 3.5)
-        self.assertEqual(obs["score_version"], "age-adjusted-v1.1")
+        self.assertEqual(obs["score_version"], "local-baseline-v1.2")
 
     def test_same_utc_day_keeps_one_observation_with_later_values(self):
         hist = history.load(Path("/nonexistent"))

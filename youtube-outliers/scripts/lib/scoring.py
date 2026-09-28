@@ -1,15 +1,20 @@
 """Pure scoring functions. No I/O. `now` is always passed in.
 
-Score = this video's views ÷ the views this channel's typical video has at the
-same age. Views are front-loaded (most arrive in the first days), so comparing
-a 1-day-old video's views-per-day with a 30-day average made nearly every new
-upload look like a breakout. Instead, VIEW_CURVE gives the share of lifetime
-views a typical long-form video has at each age. Each baseline video's views are
-divided by its share to estimate its lifetime views; the channel's typical
-lifetime views is the median of those, over the channel's 15 most recent eligible
-long-form videos (older eras of a fast-growing channel would drag it down). A
-candidate's expected views are that median × its own share, so a normal video
-scores about 1x at any age.
+Score = this video's views ÷ the views this creator's typical video has at the
+same age. Views are front-loaded, so VIEW_CURVE gives the share of lifetime
+views a typical long-form video has at each age; dividing views by that share
+estimates lifetime views, and a normal video scores about 1x at any age.
+
+"Typical" is local (v1.2): the median lifetime estimate of the 15 uploads
+closest to the video in publish date, from the same ~30-upload fetch, excluding
+the video itself and uploads under 3 days old. Two reasons:
+- Slow uploaders (one video a month) have nothing inside a short date window,
+  so a baseline that had to be older than the window skipped them entirely.
+- A creator's 30 uploads can span years; comparing with nearby uploads keeps
+  each video in its own era instead of against a much smaller (or bigger) past.
+
+Ranges (week, month, 3 months, 6 months) only choose which videos are
+candidates. One fetch covers every range, so all ranges cost the same.
 
 Every candidate also carries `early` (under 24 hours, when views move fastest)
 and a `confidence` level. Labels inform; they never hide a qualifying video.
@@ -27,15 +32,16 @@ MAX_BASELINE_VIDEOS = 15
 HIGH_CONFIDENCE_BASELINE = 8
 HIGH_CONFIDENCE_AGE = 3
 EARLY_AGE = 1
-SCORING_METHOD = "age-adjusted-v1.1"
+SCORING_METHOD = "local-baseline-v1.2"
 MIN_SPARSE_BASELINE = 3
-BASELINE_MIN_AGE = 14
-BASELINE_MAX_AGE = 180
-SPARSE_BASELINE_MAX_AGE = 365
+NEIGHBOR_MIN_AGE = 3  # baseline uploads younger than this have noisy lifetime estimates
 CANDIDATE_MIN_AGE = 0.5
-DEFAULT_DAYS = 7
+RANGES = {"week": 7, "month": 30, "3months": 90, "6months": 180}
+RANGE_LABELS = {"week": "This week", "month": "This month", "3months": "3 months", "6months": "6 months"}
+DEFAULT_RANGE = "week"
+DEFAULT_DAYS = RANGES[DEFAULT_RANGE]
 MIN_DAYS = 7
-MAX_DAYS = 30  # one channel fetch holds ~30 uploads, about a month for daily uploaders
+MAX_DAYS = 180
 MIN_SCORE = 2.0
 MIN_VIEWS = 1000
 NOTABLE = 2.0
@@ -69,52 +75,49 @@ def expected_share(age):
     return VIEW_CURVE[-1][1]
 
 
-def _recent_baseline(videos, now, days, max_age):
-    """Newest-first eligible long-form videos, at most MAX_BASELINE_VIDEOS.
+def lifetime_estimate(video, now):
+    """Estimated lifetime views: current views ÷ the share a typical video has at this age."""
+    return video["views"] / expected_share(age_days(video, now))
 
-    The baseline starts at 14 days, or strictly after the candidate window when
-    that's longer, so no video is both a candidate and part of its own baseline.
+
+def local_baseline(video, pool, now):
+    """Typical lifetime views around `video`, from the same creator's nearby uploads.
+
+    Uses the MAX_BASELINE_VIDEOS long-form uploads closest to `video` in publish
+    date, excluding `video` itself and uploads under NEIGHBOR_MIN_AGE days old
+    (their lifetime estimates are too noisy). Returns {"value", "n", "type"},
+    "sparse" when only 3–4 neighbours exist, or None below that.
     """
-    def eligible(age):
-        after_window = age > days if days >= BASELINE_MIN_AGE else True
-        return BASELINE_MIN_AGE <= age <= max_age and after_window
-    picked = [v for v in videos if is_long_form(v) and eligible(age_days(v, now))]
-    picked.sort(key=lambda v: datetime.fromisoformat(v["published_at"]), reverse=True)
-    return picked[:MAX_BASELINE_VIDEOS]
+    published = datetime.fromisoformat(video["published_at"])
+    neighbours = [v for v in pool
+                  if v["id"] != video["id"] and is_long_form(v) and age_days(v, now) >= NEIGHBOR_MIN_AGE]
+    neighbours.sort(key=lambda v: (abs((datetime.fromisoformat(v["published_at"]) - published).total_seconds()), v["id"]))
+    picked = neighbours[:MAX_BASELINE_VIDEOS]
+    if len(picked) < MIN_SPARSE_BASELINE:
+        return None
+    value = float(median(lifetime_estimate(v, now) for v in picked))
+    return {"value": value, "n": len(picked), "type": "standard" if len(picked) >= MIN_BASELINE else "sparse"}
 
 
-def baseline_min_age(days=DEFAULT_DAYS):
-    """Youngest age a baseline video can have, for messages."""
-    return max(BASELINE_MIN_AGE, days)
+def channel_coverage_days(videos, now):
+    """How far back this fetch reaches: the age of the oldest long-form upload (0 if none)."""
+    ages = [age_days(v, now) for v in videos if is_long_form(v)]
+    return max(ages) if ages else 0.0
 
 
-def baseline_videos(videos, now, days=DEFAULT_DAYS):
-    """The standard baseline: the 15 newest long-form videos aged 14 to 180 days."""
-    return _recent_baseline(videos, now, days, BASELINE_MAX_AGE)
+def range_days(name):
+    """Days for a named range; raises ValueError for unknown names."""
+    if name not in RANGES:
+        raise ValueError(f"range must be one of {', '.join(RANGES)}")
+    return RANGES[name]
 
 
-def sparse_baseline_videos(videos, now, days=DEFAULT_DAYS):
-    """Fallback when the standard set is too small: the 15 newest aged 14 to 365 days."""
-    return _recent_baseline(videos, now, days, SPARSE_BASELINE_MAX_AGE)
-
-
-def baseline_profile(videos, now, days=DEFAULT_DAYS):
-    """Typical lifetime views, sample size, and type, preferring the standard baseline."""
-    selected = baseline_videos(videos, now, days)
-    baseline_type = "standard"
-    if len(selected) < MIN_BASELINE:
-        selected = sparse_baseline_videos(videos, now, days)
-        baseline_type = "sparse"
-        if len(selected) < MIN_SPARSE_BASELINE:
-            return None
-    value = float(median(v["views"] / expected_share(age_days(v, now)) for v in selected))
-    return {"value": value, "n": len(selected), "type": baseline_type}
-
-
-def channel_baseline(videos, now, days=DEFAULT_DAYS):
-    """Typical lifetime views for the channel, or None when fewer than 3 baseline videos exist."""
-    profile = baseline_profile(videos, now, days)
-    return profile["value"] if profile else None
+def range_bucket(age):
+    """The shortest named range a video of this age falls in, or None past the longest."""
+    for name, days in RANGES.items():
+        if age <= days:
+            return name
+    return None
 
 
 def _tier(score):
@@ -130,11 +133,11 @@ def confidence(early, baseline_type, baseline_n, age):
 
 
 def score_channel(videos, now, days=DEFAULT_DAYS):
-    """Return qualifying candidates (score >= MIN_SCORE) from the last `days` days, unsorted."""
-    profile = baseline_profile(videos, now, days)
-    if profile is None or profile["value"] <= 0:
-        return []
-    typical = profile["value"]
+    """Return qualifying candidates (score >= MIN_SCORE) from the last `days` days, unsorted.
+
+    Each candidate is compared with its own local baseline, so a creator who
+    posts once a month is scored as fairly as one who posts daily.
+    """
     out = []
     for v in videos:
         if not is_long_form(v):
@@ -144,6 +147,10 @@ def score_channel(videos, now, days=DEFAULT_DAYS):
             continue
         if v["views"] < MIN_VIEWS:
             continue
+        profile = local_baseline(v, videos, now)
+        if profile is None or profile["value"] <= 0:
+            continue
+        typical = profile["value"]
         expected = typical * expected_share(age)
         score = round(v["views"] / expected, 1)
         if score < MIN_SCORE:
@@ -153,6 +160,7 @@ def score_channel(videos, now, days=DEFAULT_DAYS):
             **v,
             "age_days": round(age, 1),
             "age_hours": round(age * 24, 1),
+            "range": range_bucket(age),
             "expected_views": round(expected),
             "baseline_views": round(typical),
             "baseline_n": profile["n"],
@@ -164,4 +172,19 @@ def score_channel(videos, now, days=DEFAULT_DAYS):
             "scoring_method": SCORING_METHOD,
             "baseline_limit": MAX_BASELINE_VIDEOS,
         })
+    return out
+
+
+def by_range(candidates, days):
+    """The free time-range audit: count and top-3 ids for every named range up to `days`.
+
+    Ranges nest (a 5-day-old video counts in week, month, 3 months and 6 months),
+    so each range answers "what worked over this whole period?".
+    """
+    out = {}
+    for name, span in RANGES.items():
+        if span > days:
+            break
+        inside = sorted((c for c in candidates if c["age_days"] <= span), key=lambda c: (-c["score"], -c["views"], c["id"]))
+        out[name] = {"label": RANGE_LABELS[name], "days": span, "count": len(inside), "top": [c["id"] for c in inside[:3]]}
     return out
