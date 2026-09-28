@@ -268,6 +268,27 @@ class ChannelLinkTests(unittest.TestCase):
         self.assertEqual(results[1]["exists"], False)
         self.assertIn("UCnohandle", results[1]["handle"])
 
+    def test_brand_range_saved_validated_and_shown_in_status(self):
+        with sandbox() as (_, content):
+            code, out = run(["brand", "--channel", "@me", "--range", "6months"])
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(out)["range"], "6months")
+            profile = content / "me" / "brand" / "profile.md"
+            self.assertIn("## Report range\n6months", profile.read_text())
+            err = io.StringIO()
+            with mock.patch("sys.stderr", err):
+                self.assertEqual(run(["brand", "--name", "me", "--range", "year"])[0], 1)
+            self.assertIn("range must be one of week, month, 3months, 6months", err.getvalue())
+            self.assertIn("## Report range\n6months", profile.read_text())
+
+    def test_new_profile_defaults_to_week_and_old_profiles_count_as_week(self):
+        with sandbox() as (_, content):
+            code, out = run(["brand", "--channel", "@me"])
+            self.assertEqual(json.loads(out)["range"], "week")
+            profile = content / "me" / "brand" / "profile.md"
+            profile.write_text(profile.read_text().replace("## Report range\nweek\n\n", ""))
+            self.assertEqual(setup.brand_summary(content, "me")["range"], "week")
+
     def test_brand_add_accepts_channel_links(self):
         with sandbox(), mock.patch.object(setup.urllib.request, "urlopen", page_opener):
             info = json.loads(run(["brand", "--channel", "@me", "--add",

@@ -74,12 +74,12 @@ class ReportTests(unittest.TestCase):
     def test_write_markdown_zero_results(self):
         with tempfile.TemporaryDirectory() as d:
             md = report.write_markdown(Path(d) / "r.md", "b", "2026-09-21", [], [])
-            self.assertIn("No videos cleared 2.0x in the last 7 days", md)
+            self.assertIn("No videos cleared 2.0x in: This week", md)
 
     def test_write_markdown_window_follows_days(self):
         with tempfile.TemporaryDirectory() as d:
             md = report.write_markdown(Path(d) / "r.md", "b", "2026-09-21", [C], [], days=30)
-            self.assertIn("window: last 30 days", md)
+            self.assertIn("range: This month", md)
 
     def test_generated_markdown_punctuation_has_no_em_dash_but_source_title_is_literal(self):
         with tempfile.TemporaryDirectory() as d:

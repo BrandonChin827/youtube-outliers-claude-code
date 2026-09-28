@@ -2,15 +2,19 @@
 # skills/youtube-outliers/scripts/outliers.py
 """youtube-outliers CLI.
 
-  python3 outliers.py run <brand> [--days 7] [--max 30]   # fetch, score, write report + JSON, print ranked list
+  python3 outliers.py run <brand> [--range week|month|3months|6months] [--max 60]
+                                                         # fetch, score, write report + JSON, print ranked list
+                                                         # (default range: the brand profile's "Report range")
   python3 outliers.py collect <brand> [--confirm-credits]  # optional: save view snapshots only (~1 credit/channel)
   python3 outliers.py transcript <url> [--lang en]         # print a video's transcript (1 credit)
   python3 outliers.py notes-skeleton <brand> [--date D]    # print a notes.json template with real video ids
+  python3 outliers.py shortlist <brand> --notes notes.json # the 5 videos to break down (relevance, then score)
   python3 outliers.py publish <brand> --notes notes.json   # render Notes/CSV + chat summary from notes.json
                                 [--date D]
 
 Notion pages are created by Claude through the Notion connector, not by this script.
-`publish` writes <run-date>-notion.md, the exact page body Claude sends to Notion.
+`publish` writes <run-date>-notion.md, the exact page body Claude sends to Notion,
+and <run-date>-chat.md, the same report as chat Markdown for users without Notion.
 
 Progress goes to stderr; only the deliverable goes to stdout. `publish` spends
 no ScrapeCreators credits and can be re-run to iterate on formatting.
@@ -25,10 +29,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # make `scripts.lib` importable when run directly
 
-from scripts.lib import fetch, history, notes as notes_mod, notion_page, report  # noqa: E402
+from scripts.lib import chat_report, fetch, history, notes as notes_mod, notion_page, report  # noqa: E402
 from scripts.lib.env import brand_home, load_api_key  # noqa: E402
-from scripts.lib.scoring import (DEFAULT_DAYS, MAX_DAYS, MIN_DAYS, MIN_SCORE, MIN_SPARSE_BASELINE,  # noqa: E402
-                                 baseline_min_age, channel_baseline, score_channel)
+from scripts.lib.scoring import (DEFAULT_RANGE, MAX_DAYS, MIN_DAYS, MIN_SCORE, RANGE_LABELS, RANGES,  # noqa: E402
+                                 by_range, channel_coverage_days, is_long_form, score_channel)
 from scripts.lib.tracked import load_tracked  # noqa: E402
 
 
@@ -72,12 +76,38 @@ def collect(brand, now, api_key, fetch_fn=fetch.fetch_channel_videos):
             "credits": len(tracked), "history": str(hist_path)}
 
 
-def run(brand, now, api_key, max_results=30, days=DEFAULT_DAYS, fetch_fn=fetch.fetch_channel_videos):
+def profile_range(brand):
+    """The brand's saved `## Report range`, or "" when missing or not a known range."""
+    profile = brand_home(brand) / "brand" / "profile.md"
+    if not profile.exists():
+        return ""
+    m = re.search(r"^## Report range\n(.*?)(?=^## |\Z)", profile.read_text(), re.M | re.S)
+    value = m.group(1).strip().lower() if m else ""
+    return value if value in RANGES else ""
+
+
+def resolve_range(brand, range_arg=None, days_arg=None):
+    """(name, label, days): --days beats --range beats the profile beats the default.
+
+    Raises ValueError for days outside MIN_DAYS..MAX_DAYS, before anything is fetched.
+    """
+    if days_arg is not None:
+        if not MIN_DAYS <= days_arg <= MAX_DAYS:
+            raise ValueError(f"--days must be between {MIN_DAYS} and {MAX_DAYS} (got {days_arg})")
+        return f"{days_arg}days", f"Last {days_arg} days", days_arg
+    name = range_arg or profile_range(brand) or DEFAULT_RANGE
+    return name, RANGE_LABELS[name], RANGES[name]
+
+
+def run(brand, now, api_key, max_results=60, days=RANGES[DEFAULT_RANGE], range_name=None,
+        fetch_fn=fetch.fetch_channel_videos):
     tracked, out_dir = tracked_channels(brand)
     run_date = now.date().isoformat()
     hist = history.load(out_dir / "history.json")
+    range_name = range_name or next((n for n, d in RANGES.items() if d == days), f"{days}days")
+    range_label = RANGE_LABELS.get(range_name, f"Last {days} days")
 
-    candidates, skipped = [], []
+    candidates, skipped, coverage = [], [], {}
     for row in tracked:
         handle = row["handle"]
         videos = fetch_fn(handle, api_key)
@@ -85,13 +115,16 @@ def run(brand, now, api_key, max_results=30, days=DEFAULT_DAYS, fetch_fn=fetch.f
         if not videos:
             skipped.append({"handle": handle, "reason": "fetch failed or no videos"})
             continue
-        if channel_baseline(videos, now, days) is None:
-            skipped.append({"handle": handle,
-                            "reason": f"no reliable baseline (need at least {MIN_SPARSE_BASELINE} long-form videos aged {baseline_min_age(days)}–365 days)"
-                                      + (f"; a scan only sees about 30 recent uploads, so frequent uploaders need a shorter window: try --days {DEFAULT_DAYS}"
-                                         if days > DEFAULT_DAYS and channel_baseline(videos, now) is not None else "")})
+        if not any(is_long_form(v) for v in videos):
+            skipped.append({"handle": handle, "reason": "no long-form videos in its latest uploads"})
             history.record(hist, videos, now, [])
             continue
+        reach = channel_coverage_days(videos, now)
+        coverage[handle] = round(reach, 1)
+        if reach < days:
+            skipped.append({"handle": handle,
+                            "reason": f"only covers the last {int(reach)} days (its ~30 latest uploads), "
+                                      f"so older videos in this range weren't seen"})
         cands = score_channel(videos, now, days)
         for c in cands:
             c["adjacent"] = row["adjacent"]
@@ -109,8 +142,12 @@ def run(brand, now, api_key, max_results=30, days=DEFAULT_DAYS, fetch_fn=fetch.f
         "run_date": run_date,
         "generated_at": now.isoformat(),
         "channels": len(tracked),
+        "range": range_name,
+        "range_label": range_label,
         "days": days,
         "candidates": candidates,
+        "by_range": by_range(candidates, days),
+        "coverage": coverage,
         "skipped": skipped,
         "paths": {
             "json": str(out_dir / f"{run_date}.json"),
@@ -120,7 +157,8 @@ def run(brand, now, api_key, max_results=30, days=DEFAULT_DAYS, fetch_fn=fetch.f
         },
     }
     report.write_json(out_dir / f"{run_date}.json", payload)
-    report.write_markdown(out_dir / f"{run_date}.md", brand, run_date, candidates, skipped, days)
+    report.write_markdown(out_dir / f"{run_date}.md", brand, run_date, candidates, skipped, days,
+                          range_label=range_label, ranges=payload["by_range"])
     return payload
 
 
@@ -151,11 +189,18 @@ def publish(brand, notes_path, run_date=None):
     paths.setdefault("md", str(out_dir / f"{payload['run_date']}.md"))
     paths.setdefault("csv", str(out_dir / f"{payload['run_date']}.csv"))
     paths["notion_md"] = str(out_dir / f"{payload['run_date']}-notion.md")
+    paths["chat_md"] = str(out_dir / f"{payload['run_date']}-chat.md")
     payload["paths"] = paths
+
+    picked = [c["id"] for c in notes_mod.shortlist(payload["candidates"], notes.get("relevance") or {})]
+    chosen = [b.get("video_id") for b in notes.get("breakdowns", [])]
+    if set(chosen) != set(picked):
+        log(f"note: breakdowns differ from shortlist ({', '.join(picked)})")
 
     notes_mod.fill_markdown_notes(paths["md"], notes_mod.render_markdown_notes(payload, notes))
     notes_mod.write_csv(paths["csv"], payload, notes)
     Path(paths["notion_md"]).write_text(notion_page.render(payload, notes))
+    Path(paths["chat_md"]).write_text(chat_report.render(payload, notes))
 
     return {"discord": notes_mod.render_discord(payload, notes), "paths": paths,
             "notion_title": notion_page.page_title(payload)}
@@ -166,8 +211,9 @@ def main(argv=None):
     sub = p.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
     r.add_argument("brand")
-    r.add_argument("--max", type=int, default=30)
-    r.add_argument("--days", type=int, default=DEFAULT_DAYS, help=f"look-back window, {MIN_DAYS} to {MAX_DAYS} days")
+    r.add_argument("--max", type=int, default=60)
+    r.add_argument("--range", choices=list(RANGES), help="look-back range (default: the brand profile's Report range)")
+    r.add_argument("--days", type=int, default=None, help=f"custom look-back, {MIN_DAYS} to {MAX_DAYS} days (prefer --range)")
     c = sub.add_parser("collect")
     c.add_argument("brand")
     c.add_argument("--confirm-credits", action="store_true", help="actually fetch (about 1 credit per channel)")
@@ -177,6 +223,10 @@ def main(argv=None):
     s = sub.add_parser("notes-skeleton")
     s.add_argument("brand")
     s.add_argument("--date")
+    sl = sub.add_parser("shortlist")
+    sl.add_argument("brand")
+    sl.add_argument("--notes", required=True)
+    sl.add_argument("--date")
     pb = sub.add_parser("publish")
     pb.add_argument("brand")
     pb.add_argument("--notes", required=True)
@@ -188,6 +238,23 @@ def main(argv=None):
         print(json.dumps(notes_mod.skeleton(load_payload(args.brand, args.date)), indent=2))
         return 0
 
+    if args.cmd == "shortlist":
+        payload = load_payload(args.brand, args.date)
+        try:
+            notes = notes_mod.load(args.notes)
+        except ValueError as e:
+            log(str(e))
+            return 1
+        missing = notes_mod.missing_relevance(notes, payload["candidates"])
+        if missing:
+            log(f"no relevance label for {len(missing)} videos, treated as medium: {', '.join(missing)}")
+        rel = notes.get("relevance") or {}
+        rank = {c["id"]: i for i, c in enumerate(payload["candidates"], 1)}
+        for i, c in enumerate(notes_mod.shortlist(payload["candidates"], rel), 1):
+            fit = (rel.get(c["id"]) or "medium").lower()
+            print(f"{i}. [{fit} fit · #{rank[c['id']]}] {report.fmt_line(rank[c['id']], c).split('] ', 1)[1]}")
+        return 0
+
     if args.cmd == "publish":
         try:
             result = publish(args.brand, args.notes, args.date)
@@ -197,6 +264,7 @@ def main(argv=None):
         print(result["discord"])
         print(f"\nFiles: {result['paths']['md']} | {result['paths']['csv']}")
         print(f"Notion page: {result['paths']['notion_md']} (title: {result['notion_title']})")
+        print(f"Chat report: {result['paths']['chat_md']}")
         return 0
 
     if args.cmd == "collect" and not args.confirm_credits:
@@ -205,9 +273,12 @@ def main(argv=None):
               f"Re-run with --confirm-credits to collect.")
         return 0
 
-    if args.cmd == "run" and not MIN_DAYS <= args.days <= MAX_DAYS:
-        log(f"--days must be between {MIN_DAYS} and {MAX_DAYS} (got {args.days}); nothing was fetched")
-        return 1
+    if args.cmd == "run":
+        try:
+            range_name, range_label, days = resolve_range(args.brand, args.range, args.days)
+        except ValueError as e:
+            log(f"{e}; nothing was fetched")
+            return 1
 
     api_key = load_api_key()
     if not api_key:
@@ -230,15 +301,16 @@ def main(argv=None):
         return 0
 
     payload = run(args.brand, datetime.now(timezone.utc), api_key, max_results=args.max,
-                  days=args.days, fetch_fn=fetch.fetch_channel_videos)
+                  days=days, range_name=range_name, fetch_fn=fetch.fetch_channel_videos)
     cands = payload["candidates"]
+    print(f"Range: {range_label} ({days} days)")
     if not cands:
-        print(f"No videos cleared {MIN_SCORE}x on the {payload['brand']} watchlist in the last {payload['days']} days.")
+        print(f"No videos cleared {MIN_SCORE}x on the {payload['brand']} watchlist in: {range_label}.")
     for i, c in enumerate(cands, 1):
         print(report.fmt_line(i, c))
     print(f"\nReport: {payload['paths']['md']}\nData:   {payload['paths']['json']}")
     if payload["skipped"]:
-        print("Skipped: " + ", ".join(f"{s['handle']} ({s['reason']})" for s in payload["skipped"]))
+        print("Coverage notes: " + ", ".join(f"{s['handle']} ({s['reason']})" for s in payload["skipped"]))
     return 0
 
 

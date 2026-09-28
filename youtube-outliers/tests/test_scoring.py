@@ -24,6 +24,10 @@ def baseline_set():
     return [typical(f"b{i}", 20 + i * 10) for i in range(6)]
 
 
+def ids(cands):
+    return [c["id"] for c in cands]
+
+
 class ScoringTests(unittest.TestCase):
     def test_age_days(self):
         self.assertAlmostEqual(scoring.age_days(vid("a", 3, 1), NOW), 3.0, places=3)
@@ -41,18 +45,6 @@ class ScoringTests(unittest.TestCase):
         self.assertTrue(all(0 < s <= 1 for s in shares))
         self.assertAlmostEqual(scoring.expected_share(7), 0.65)
         self.assertAlmostEqual(scoring.expected_share(5000), 1.0)
-
-    def test_baseline_is_median_typical_lifetime_views_of_14_to_180_day_videos(self):
-        vids = baseline_set() + [vid("fresh", 2, 999999), vid("old", 400, 999999), typical("hit", 30, 10)]
-        # eligible: 6 typical + 1 hit → median of 7 = TYPICAL
-        self.assertAlmostEqual(scoring.channel_baseline(vids, NOW), TYPICAL, delta=1)
-
-    def test_baseline_none_when_fewer_than_three(self):
-        self.assertIsNone(scoring.channel_baseline(baseline_set()[:2], NOW))
-
-    def test_baseline_videos_matches_baseline_n(self):
-        vids = baseline_set() + [vid("fresh", 2, 999999), vid("short", 30, 5000, length=40)]
-        self.assertEqual(len(scoring.baseline_videos(vids, NOW)), 6)
 
     def test_typical_video_scores_about_one_at_any_age(self):
         for age in (1, 3, 7):
@@ -72,45 +64,107 @@ class ScoringTests(unittest.TestCase):
             typical("ok", 5, 3),        # 3x → notable
         ]
         out = scoring.score_channel(vids, NOW)
-        self.assertEqual([c["id"] for c in out], ["big", "ok"])
+        self.assertEqual(ids(out), ["big", "ok"])
         self.assertEqual(out[0]["score"], 6.0)
         self.assertEqual(out[0]["tier"], "breakout")
         self.assertEqual(out[1]["score"], 3.0)
         self.assertEqual(out[1]["tier"], "notable")
-        self.assertEqual(out[0]["baseline_n"], 6)
+        # neighbours of "big": 6 typical + meh + ok (tiny and toonew are under 3 days old)
+        self.assertEqual(out[0]["baseline_n"], 8)
         self.assertEqual(out[0]["baseline_type"], "standard")
         self.assertEqual(out[0]["expected_views"], round(TYPICAL * scoring.expected_share(3)))
+        self.assertEqual(out[0]["range"], "week")
 
-    def test_default_window_is_seven_days(self):
+    def test_default_range_is_one_week(self):
         out = scoring.score_channel(baseline_set() + [typical("wk2", 10, 6)], NOW)
         self.assertEqual(out, [])
 
-    def test_longer_window_finds_older_videos_and_moves_baseline(self):
-        base = [typical(f"b{i}", 35 + i * 10) for i in range(6)]
-        out = scoring.score_channel(base + [typical("wk3", 20, 6)], NOW, days=30)
-        self.assertEqual([c["id"] for c in out], ["wk3"])
-        self.assertEqual(out[0]["baseline_n"], 6)
-        # a 20-day-old video is a candidate with days=30, so it must not be in the baseline too
-        self.assertNotIn("wk3", [v["id"] for v in scoring.baseline_videos(base + [typical("wk3", 20)], NOW, days=30)])
+    def test_longer_range_finds_older_videos(self):
+        out = scoring.score_channel(baseline_set() + [typical("wk3", 25, 6)], NOW, days=30)
+        self.assertEqual(ids(out), ["wk3"])
+        self.assertEqual(out[0]["range"], "month")
 
-    def test_sparse_baseline_expands_to_365_days_with_three_videos(self):
-        sparse = [typical(f"s{i}", 200 + i * 40) for i in range(3)]
-        out = scoring.score_channel(sparse + [typical("big", 3, 8)], NOW)
-        self.assertEqual([c["id"] for c in out], ["big"])
-        self.assertEqual(out[0]["score"], 8.0)
-        self.assertEqual(out[0]["baseline_n"], 3)
-        self.assertEqual(out[0]["baseline_type"], "sparse")
-
-    def test_score_channel_empty_when_no_baseline(self):
+    def test_score_channel_empty_when_too_few_neighbours(self):
         self.assertEqual(scoring.score_channel([vid("big", 3, 24000)], NOW), [])
+        self.assertEqual(scoring.score_channel(baseline_set()[:2] + [typical("big", 5, 8)], NOW), [])
+
+
+class LocalBaselineTests(unittest.TestCase):
+    def test_uses_closest_uploads_in_time_not_newest(self):
+        # 15 recent uploads at 1x around day 300, 15 old uploads at 10x around day 600.
+        near = [typical(f"n{i}", 290 + i, 1) for i in range(15)]
+        far = [typical(f"f{i}", 590 + i, 10) for i in range(15)]
+        target = typical("t", 300, 1)
+        profile = scoring.local_baseline(target, near + far + [target], NOW)
+        self.assertEqual(profile["n"], 15)
+        self.assertAlmostEqual(profile["value"], TYPICAL, delta=1)
+
+    def test_old_era_video_is_judged_against_its_own_era(self):
+        # A slow uploader: one hit 150 days ago, the rest of its era typical, a much bigger later era.
+        era_then = [typical(f"t{i}", 140 + i * 5, 1) for i in range(8)]
+        era_now = [typical(f"n{i}", 10 + i * 5, 20) for i in range(8)]
+        hit = typical("hit", 150, 6)
+        out = scoring.score_channel(era_then + era_now + [hit], NOW, days=180)
+        self.assertIn("hit", ids(out))
+        self.assertEqual({c["id"]: c for c in out}["hit"]["score"], 6.0)
+
+    def test_excludes_itself(self):
+        base = baseline_set()
+        target = typical("t", 25, 50)
+        profile = scoring.local_baseline(target, base + [target], NOW)
+        self.assertEqual(profile["n"], 6)
+        self.assertAlmostEqual(profile["value"], TYPICAL, delta=1)
+
+    def test_excludes_uploads_under_three_days_old(self):
+        base = baseline_set()
+        fresh = vid("fresh", 2.9, 9_999_999)
+        at_three = typical("three", 3.0)
+        profile = scoring.local_baseline(typical("t", 40), base + [fresh, at_three], NOW)
+        self.assertEqual(profile["n"], 7)
+
+    def test_caps_at_fifteen_neighbours(self):
+        vids = [typical(f"b{i}", 10 + i) for i in range(25)]
+        self.assertEqual(scoring.local_baseline(typical("t", 20), vids, NOW)["n"], 15)
+
+    def test_sparse_and_none_thresholds(self):
+        self.assertEqual(scoring.local_baseline(typical("t", 40), baseline_set()[:5], NOW)["type"], "standard")
+        self.assertEqual(scoring.local_baseline(typical("t", 40), baseline_set()[:4], NOW)["type"], "sparse")
+        self.assertEqual(scoring.local_baseline(typical("t", 40), baseline_set()[:3], NOW)["n"], 3)
+        self.assertIsNone(scoring.local_baseline(typical("t", 40), baseline_set()[:2], NOW))
+
+    def test_shorts_streams_and_long_videos_never_in_baseline(self):
+        vids = [vid("short", 20, 5000, length=40), vid("stream", 20, 5000, live=True),
+                vid("long", 20, 5000, length=4 * 3600)] + baseline_set()[:3]
+        self.assertEqual(scoring.local_baseline(typical("t", 40), vids, NOW)["n"], 3)
+
+    def test_slow_uploader_is_scored(self):
+        # One upload in the last 180 days, 29 older ones: v1.1 skipped this channel on short windows.
+        older = [typical(f"o{i}", 200 + i * 30, 1) for i in range(29)]
+        out = scoring.score_channel(older + [typical("new", 60, 5)], NOW, days=180)
+        self.assertEqual(ids(out), ["new"])
+        self.assertEqual(out[0]["range"], "3months")
 
 
 HOUR = 1 / 24
 EPS = 1 / 86400  # one second, in days
 
 
-def ids(cands):
-    return [c["id"] for c in cands]
+class RangeTests(unittest.TestCase):
+    def test_range_days(self):
+        self.assertEqual([scoring.range_days(r) for r in ("week", "month", "3months", "6months")], [7, 30, 90, 180])
+        with self.assertRaises(ValueError):
+            scoring.range_days("year")
+
+    def test_range_bucket_edges(self):
+        cases = {7: "week", 7.1: "month", 30: "month", 30.1: "3months", 90: "3months",
+                 90.1: "6months", 180: "6months", 181: None}
+        for age, bucket in cases.items():
+            self.assertEqual(scoring.range_bucket(age), bucket, age)
+
+    def test_channel_coverage_days(self):
+        vids = baseline_set() + [vid("short", 400, 5000, length=40)]
+        self.assertAlmostEqual(scoring.channel_coverage_days(vids, NOW), 70, places=3)
+        self.assertEqual(scoring.channel_coverage_days([], NOW), 0.0)
 
 
 class BoundaryTests(unittest.TestCase):
@@ -130,61 +184,16 @@ class BoundaryTests(unittest.TestCase):
         self.assertTrue(out["c0"]["early"])
         self.assertFalse(out["c1"]["early"])
 
-    def test_candidate_seven_day_boundary(self):
+    def test_candidate_range_boundary(self):
         out = self.candidates_at(7 - EPS, 7.0, 7 + EPS)
         self.assertEqual(sorted(out), ["c0", "c1"])
-
-    def test_baseline_fourteen_day_boundary(self):
-        vids = [typical("in", 14.0), typical("out", 14 - EPS), typical("above", 14 + EPS)]
-        self.assertEqual(sorted(v["id"] for v in scoring.baseline_videos(vids, NOW)), ["above", "in"])
-
-    def test_baseline_one_eighty_day_boundary(self):
-        vids = [typical("in", 180.0), typical("out", 180 + EPS), typical("below", 180 - EPS)]
-        self.assertEqual(sorted(v["id"] for v in scoring.baseline_videos(vids, NOW)), ["below", "in"])
-        self.assertIn("out", [v["id"] for v in scoring.sparse_baseline_videos(vids, NOW)])
-
-    def test_sparse_three_sixty_five_day_boundary(self):
-        vids = [typical("in", 365.0), typical("out", 365 + EPS), typical("below", 365 - EPS)]
-        self.assertEqual(sorted(v["id"] for v in scoring.sparse_baseline_videos(vids, NOW)), ["below", "in"])
-
-    def test_long_window_baseline_starts_after_window(self):
-        # With --days 20, a video exactly 20 days old is a candidate, so it can't also be baseline.
-        vids = [typical("edge", 20.0), typical("older", 20 + EPS)]
-        self.assertEqual([v["id"] for v in scoring.baseline_videos(vids, NOW, days=20)], ["older"])
-
-
-class RecentBaselineTests(unittest.TestCase):
-    def test_keeps_newest_fifteen_regardless_of_input_order(self):
-        vids = [typical(f"b{i}", 14 + i) for i in range(20)]
-        newest = scoring.baseline_videos(vids, NOW)
-        self.assertEqual([v["id"] for v in newest], [f"b{i}" for i in range(15)])
-        self.assertEqual(scoring.baseline_videos(list(reversed(vids)), NOW), newest)
-
-    def test_older_videos_outside_fifteen_do_not_move_the_median(self):
-        recent = [typical(f"r{i}", 15 + i) for i in range(15)]
-        with_old = recent + [typical(f"old{i}", 100 + i, 50) for i in range(10)]
-        self.assertAlmostEqual(scoring.channel_baseline(with_old, NOW), scoring.channel_baseline(recent, NOW))
-
-    def test_sparse_fallback_also_keeps_newest_fifteen(self):
-        vids = [typical(f"s{i}", 181 + i) for i in range(20)]
-        profile = scoring.baseline_profile(vids, NOW)
-        self.assertEqual((profile["type"], profile["n"]), ("sparse", 15))
-
-    def test_minimums_unchanged(self):
-        self.assertEqual(scoring.baseline_profile([typical(f"b{i}", 20 + i) for i in range(5)], NOW)["type"], "standard")
-        self.assertEqual(scoring.baseline_profile([typical(f"b{i}", 200 + i) for i in range(3)], NOW)["type"], "sparse")
-        self.assertIsNone(scoring.baseline_profile([typical(f"b{i}", 200 + i) for i in range(2)], NOW))
-
-    def test_shorts_streams_and_long_videos_never_in_baseline(self):
-        vids = [vid("short", 20, 5000, length=40), vid("stream", 20, 5000, live=True),
-                vid("long", 20, 5000, length=4 * 3600), typical("ok", 20)]
-        self.assertEqual([v["id"] for v in scoring.baseline_videos(vids, NOW)], ["ok"])
+        out = self.candidates_at(180 - EPS, 180.0, 180 + EPS, days=180)
+        self.assertEqual(sorted(out), ["c0", "c1"])
 
 
 class ConfidenceTests(unittest.TestCase):
-    def score_one(self, age, n_baseline=8, sparse=False):
-        start = 200 if sparse else 20
-        base = [typical(f"b{i}", start + i) for i in range(n_baseline)]
+    def score_one(self, age, n_baseline=8):
+        base = [typical(f"b{i}", 20 + i) for i in range(n_baseline)]
         return scoring.score_channel(base + [typical("c", age, 6)], NOW)[0]
 
     def test_early_candidate_is_low(self):
@@ -195,7 +204,8 @@ class ConfidenceTests(unittest.TestCase):
         self.assertFalse(self.score_one(1.0)["early"])
 
     def test_sparse_is_always_low(self):
-        self.assertEqual(self.score_one(5, n_baseline=3, sparse=True)["confidence"], "low")
+        c = self.score_one(5, n_baseline=3)
+        self.assertEqual((c["baseline_type"], c["confidence"]), ("sparse", "low"))
 
     def test_high_needs_eight_standard_videos_and_three_days(self):
         self.assertEqual(self.score_one(3.0)["confidence"], "high")
@@ -204,9 +214,10 @@ class ConfidenceTests(unittest.TestCase):
 
     def test_every_candidate_has_metadata_and_early_ones_stay(self):
         c = self.score_one(0.6)
-        self.assertEqual(c["scoring_method"], "age-adjusted-v1.1")
+        self.assertEqual(c["scoring_method"], "local-baseline-v1.2")
         self.assertEqual(c["baseline_limit"], 15)
         self.assertIn("age_hours", c)
+        self.assertEqual(c["range"], "week")
 
 
 if __name__ == "__main__":

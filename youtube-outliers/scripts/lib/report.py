@@ -4,7 +4,7 @@ Kallaway's skills: `[Nx · views] Title — @handle` with the bare URL below).""
 import json
 from pathlib import Path
 
-from .scoring import DEFAULT_DAYS, MIN_SCORE, MIN_VIEWS
+from .scoring import DEFAULT_DAYS, MIN_SCORE, MIN_VIEWS, RANGE_LABELS, RANGES
 
 TITLE_MAX = 78
 
@@ -60,14 +60,29 @@ def write_json(path, payload):
     path.write_text(json.dumps(payload, indent=2))
 
 
-def write_markdown(path, brand, run_date, candidates, skipped, days=DEFAULT_DAYS):
+def range_lines(ranges, by_id):
+    """One line per range for the time-range audit: count plus the top 3 by score."""
+    lines = []
+    for r in (ranges or {}).values():
+        tops = [by_id[v] for v in r.get("top", []) if v in by_id]
+        best = "; ".join(f"{c['title']} ({c['score']}x, {c['channel']})" for c in tops) or "none"
+        word = "outlier" if r["count"] == 1 else "outliers"
+        lines.append(f"- **{r['label']}:** {r['count']} {word}. Top: {best}")
+    return lines
+
+
+def write_markdown(path, brand, run_date, candidates, skipped, days=DEFAULT_DAYS, range_label=None, ranges=None):
     n = len(candidates)
+    named = {d: RANGE_LABELS[n] for n, d in RANGES.items()}
+    label = range_label or named.get(days, f"Last {days} days")
     lines = [f"# YouTube outliers: {generated_text(brand)}: {run_date}", ""]
     if n == 0:
-        lines.append(f"No videos cleared {MIN_SCORE}x in the last {days} days. Try a longer window (up to 30 days) or check the skipped list.")
+        lines.append(f"No videos cleared {MIN_SCORE}x in: {label}. Try a longer range (up to 6 months) or check the coverage notes.")
     else:
         word = "video" if n == 1 else "videos"
-        lines.append(f"{n} qualifying {word} (window: last {days} days, min {MIN_SCORE}x, min {MIN_VIEWS:,} views).")
+        lines.append(f"{n} qualifying {word} (range: {label}, min {MIN_SCORE}x, min {MIN_VIEWS:,} views).")
+    if ranges:
+        lines += ["", "## By time range", ""] + range_lines(ranges, {c["id"]: c for c in candidates})
     lines += ["", "## Notes", "",
               "_(The agent fills this section: topic clusters, copyable/adjacent calls, and top-5 breakdowns.)_", "",
               "## Ranked", ""]

@@ -15,6 +15,8 @@ COPYABLE_COLOR = {"yes": "green_bg", "partly": "yellow_bg", "no": "red_bg"}
 BOLD_SCORE = 10  # topic tables bold scores at or above this
 TOP_WIDTHS = [336, 149, None, 212, 192, 222, 243]
 TOPIC_WIDTHS = [420, 149, None, None, None, None, None]
+RANGE_WIDTHS = [160, None, 420, None]
+TITLE_RANGE = {"month": "1 month", "3months": "3 months", "6months": "6 months"}
 _SPECIAL = re.compile(r"([\\*~`$\[\]<>{}|^])")
 
 
@@ -24,7 +26,12 @@ def esc(value):
 
 
 def page_title(payload):
-    return f"Outliers: {payload['brand']}: {payload['run_date']}"
+    """Weekly titles keep the v1.1 form; longer ranges add a suffix, e.g. "(6 months)"."""
+    title = f"Outliers: {payload['brand']}: {payload['run_date']}"
+    rng = payload.get("range")
+    if rng and rng != "week":
+        title += f" ({TITLE_RANGE.get(rng) or rng.replace('days', ' days')})"
+    return title
 
 
 def _safe_url(url):
@@ -92,6 +99,16 @@ def render(payload, notes):
             rows.append([_link(c), esc(c["channel"]), f"{c['score']}x", esc(generated_text(b.get("hook", ""))),
                          why, _copy_cell(b), titles])
         out += _table(rows, TOP_WIDTHS)
+
+    ranges = payload.get("by_range") or {}
+    if ranges:
+        out.append("## By time range")
+        rows = [["Range", "Outliers", "Best video", "Score"]]
+        for r in ranges.values():
+            best = by_id.get((r.get("top") or [None])[0])
+            rows.append([esc(r["label"]), str(r["count"]), _link(best) if best else "none",
+                         f"{best['score']}x" if best else ""])
+        out += _table(rows, RANGE_WIDTHS)
 
     out.append(f"## All {len(cands)} outliers by topic")
     placed = set()
