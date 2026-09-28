@@ -39,9 +39,9 @@ Your key, creators, and reports are kept. The old version is saved in `~/.claude
 
 ## Do I need Notion?
 
-No. Every report is saved on your computer (Markdown and CSV, in `~/Documents/Content/<your-channel>/research/youtube-outliers/`).
+No. Without Notion, the full report shows up right in your Claude Code chat, in the same tables as the Notion page: the top five breakdowns, the by-time-range summary, and every outlier grouped by topic. Every report is also saved on your computer (Markdown and CSV, in `~/Documents/Content/<your-channel>/research/youtube-outliers/`).
 
-If you'd like reports in Notion too, connect Notion in Claude's settings under Connectors, then ask Claude to add it. There's nothing else to set up.
+With Notion, each report becomes a Notion page you can open in your browser or the Notion app, and it's easier to read there. To set it up, connect Notion in Claude's settings under Connectors, then ask Claude to add it.
 
 ## What it costs
 

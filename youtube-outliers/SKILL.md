@@ -112,12 +112,12 @@ Check whether a Notion connector is available in this session (tools such as `no
   python3 "$SKILL_DIR/scripts/setup.py" brand --name "<name>" --notion-page "<page id or url>"
   ```
 
-- **Not available:** say reports are saved on their computer, and if they'd like them in Notion later, they can connect Notion in Claude's settings under Connectors and ask you to add it. Don't walk them through anything else.
-- They can skip this step. Local reports always work.
+- **Not available:** say each report will show up right here in the chat as full tables (and is also saved on their computer). If they'd like Notion later, they can connect Notion in Claude's settings under Connectors and ask you to add it. Don't walk them through anything else.
+- They can skip this step. Without Notion, the full report is shown in the chat as tables.
 
 ### Wrap-up
 
-Show a short summary: their channel, how many creators are tracked, how far back reports look (the range they picked), and where reports go (on this computer, plus Notion if set). Say they can ask for this week, this month, 3 months, or 6 months any time, or change the default. Then offer the first report with its cost: about one ScrapeCreators credit per tracked channel plus 5 to 10 for transcripts (a video with no English transcript costs one extra), so 30 creators is about 35 to 40 credits. Only run it after they say yes.
+Show a short summary: their channel, how many creators are tracked, how far back reports look (the range they picked), and where reports go (a Notion page if set, otherwise right here in the chat as full tables; always saved on this computer too). Say they can ask for this week, this month, 3 months, or 6 months any time, or change the default. Then offer the first report with its cost: about one ScrapeCreators credit per tracked channel plus 5 to 10 for transcripts (a video with no English transcript costs one extra), so 30 creators is about 35 to 40 credits. Only run it after they say yes.
 
 ## Files
 
@@ -225,15 +225,26 @@ CONTENT_HOME="${CONTENT_HOME:-$HOME/Documents/Content}"
 python3 "$SKILL_DIR/scripts/outliers.py" publish "<brand>" --notes "$CONTENT_HOME/<brand>/research/youtube-outliers/<run-date>-notes.json"
 ```
 
-**Notion.** Only if the brand has `notion.md` and a Notion connector is available in this session:
+Then deliver it one of two ways:
 
-1. Before the first-ever Notion publish for a brand, ask the user once to confirm.
+**A. The brand uses Notion** (it has `notion.md` and a Notion connector is available in this session): publish the Notion page (steps below). In the chat, give the recommended title, one line on what worked, the credits used, and the page link: "Your full report is in Notion: <link>. Open it in your browser or the Notion app." Don't paste the tables into the chat.
+
+**B. No Notion** (no `notion.md`, or no Notion connector in this session): read `<run-date>-chat.md` (the `Chat report:` path printed by `publish`) and paste it into your reply exactly as written: same tables, same order, nothing added, removed, reordered, or summarized. It mirrors the Notion page. After it, add one line with the credits used, then end by recommending Notion:
+
+- **No Notion connector:** "Tip: this report looks even better in Notion, where you can open it on any device. Connect Notion in Claude's settings under Connectors, then ask me to set it up."
+- **Connector available but no page saved:** "Want future reports in Notion? It's easier to read there. Tell me which page to put them under." If they say yes, find the page with Notion search, confirm its title, save it with `setup.py brand --name "<name>" --notion-page "<page id or url>"`, and publish this report too.
+
+Recommend Notion once per report, and don't repeat it if they said no.
+
+**Publishing to Notion:**
+
+1. Before the first-ever Notion publish for a brand, ask the user once to confirm (choosing Notion in setup, or saying yes to the recommendation above, counts).
 2. Read `<run-date>-notion.md` (the `Notion page:` path printed by `publish`). It is the finished page body in Notion-flavored Markdown. Send it exactly as written: don't rewrite, reorder, summarize, or convert it, so the page looks the same on every device.
 3. Check `<run-date>-notion.json` in the report folder. If it has a `page_id`, replace that page's content with the file instead of creating a new page.
 4. Otherwise create a child page under the saved `page_id` with the connector's create-pages tool. Title: the one printed by `publish` (`Outliers: <brand>: <run-date>`, plus the range, such as `(1 month)` or `(6 months)`, for anything longer than a week). Icon: 🎯. Content: the file.
 5. Save `{"page_id": "...", "url": "..."}` to `<run-date>-notion.json` so revisions update the same page.
 
-If the connector isn't available or the page can't be found, keep the local report, say so in one line, and continue.
+If publishing fails or the page can't be found, say so in one line and deliver option B (the chat report) instead.
 
 ## Optional: daily snapshots (advanced)
 
@@ -248,7 +259,7 @@ That prints the cost and fetches nothing. Tell the user the cost (about one cred
 
 ## Output contract
 
-- Recommended title near the top of the local report and the chat summary. The Notion page follows its fixed layout from `notion_page.py`: the top-five table, then a `By time range` table, then topic tables.
+- Recommended title near the top of the local Markdown report. The Notion page (`notion_page.py`) and the chat report (`chat_report.py`) share one fixed layout: the top-five table, then a `By time range` table, then one table per topic, then coverage notes.
 - Top-five table starts with clickable `Video`, then `Creator`, then `Score`.
 - `Why it worked` uses concise bullets.
 - Remaining candidates are grouped into topic tables with `Video`, `Channel`, `Score`, `Views`, `Age`, `#`, and `Tag`, ordered by score. The CSV adds a `Range` column (the shortest range each video falls in). There is no relevance column anywhere.
@@ -268,4 +279,4 @@ Before reporting completion:
 3. Confirm every candidate ID appears in exactly one cluster and has a `relevance` label, and that the breakdowns match `shortlist` (or say why you swapped one).
 4. Confirm generated copy has no em dashes except literal source titles.
 5. If Notion was used, confirm the page URL works and `<run-date>-notion.json` holds its ID, so revisions reuse it.
-6. Give the user the compact summary, the Notion link if any, and where the report files are.
+6. Confirm the user got either the Notion link (option A) or the full chat report ending with the Notion recommendation (option B).

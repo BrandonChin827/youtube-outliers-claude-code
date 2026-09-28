@@ -13,7 +13,8 @@
                                 [--date D]
 
 Notion pages are created by Claude through the Notion connector, not by this script.
-`publish` writes <run-date>-notion.md, the exact page body Claude sends to Notion.
+`publish` writes <run-date>-notion.md, the exact page body Claude sends to Notion,
+and <run-date>-chat.md, the same report as chat Markdown for users without Notion.
 
 Progress goes to stderr; only the deliverable goes to stdout. `publish` spends
 no ScrapeCreators credits and can be re-run to iterate on formatting.
@@ -28,7 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # make `scripts.lib` importable when run directly
 
-from scripts.lib import fetch, history, notes as notes_mod, notion_page, report  # noqa: E402
+from scripts.lib import chat_report, fetch, history, notes as notes_mod, notion_page, report  # noqa: E402
 from scripts.lib.env import brand_home, load_api_key  # noqa: E402
 from scripts.lib.scoring import (DEFAULT_RANGE, MAX_DAYS, MIN_DAYS, MIN_SCORE, RANGE_LABELS, RANGES,  # noqa: E402
                                  by_range, channel_coverage_days, is_long_form, score_channel)
@@ -188,6 +189,7 @@ def publish(brand, notes_path, run_date=None):
     paths.setdefault("md", str(out_dir / f"{payload['run_date']}.md"))
     paths.setdefault("csv", str(out_dir / f"{payload['run_date']}.csv"))
     paths["notion_md"] = str(out_dir / f"{payload['run_date']}-notion.md")
+    paths["chat_md"] = str(out_dir / f"{payload['run_date']}-chat.md")
     payload["paths"] = paths
 
     picked = [c["id"] for c in notes_mod.shortlist(payload["candidates"], notes.get("relevance") or {})]
@@ -198,6 +200,7 @@ def publish(brand, notes_path, run_date=None):
     notes_mod.fill_markdown_notes(paths["md"], notes_mod.render_markdown_notes(payload, notes))
     notes_mod.write_csv(paths["csv"], payload, notes)
     Path(paths["notion_md"]).write_text(notion_page.render(payload, notes))
+    Path(paths["chat_md"]).write_text(chat_report.render(payload, notes))
 
     return {"discord": notes_mod.render_discord(payload, notes), "paths": paths,
             "notion_title": notion_page.page_title(payload)}
@@ -261,6 +264,7 @@ def main(argv=None):
         print(result["discord"])
         print(f"\nFiles: {result['paths']['md']} | {result['paths']['csv']}")
         print(f"Notion page: {result['paths']['notion_md']} (title: {result['notion_title']})")
+        print(f"Chat report: {result['paths']['chat_md']}")
         return 0
 
     if args.cmd == "collect" and not args.confirm_credits:
