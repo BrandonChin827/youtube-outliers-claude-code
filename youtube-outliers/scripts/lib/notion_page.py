@@ -53,7 +53,7 @@ def _code(value):
 
 def _table(rows, widths):
     out = ['<table header-row="true">', "<colgroup>"]
-    out += [f'<col width="{w}">' if w else "<col>" for w in widths]
+    out += [f'<col width="{w}" />' if w else "<col />" for w in widths]  # Notion requires self-closing cols
     out.append("</colgroup>")
     for row in rows:
         out.append("<tr>")
@@ -119,7 +119,8 @@ def render(payload, notes):
         placed.update(ids)
         channels = len({by_id[v]["channel"] for v in ids})
         trend = " · trend" if cl.get("trend") else ""
-        out.append(f"### {esc(generated_text(cl.get('topic', 'Topic')))} ({channels} channels{trend})")
+        word = "channel" if channels == 1 else "channels"
+        out.append(f"### {esc(generated_text(cl.get('topic', 'Topic')))} ({channels} {word}{trend})")
         out += _table(_topic_rows(ids, by_id, rank), TOPIC_WIDTHS)
     rest = [c["id"] for c in cands if c["id"] not in placed]
     if rest:
