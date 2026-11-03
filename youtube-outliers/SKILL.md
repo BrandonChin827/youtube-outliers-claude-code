@@ -1,7 +1,7 @@
 ---
 name: youtube-outliers
 description: Finds YouTube competitor breakouts (this week up to the last 6 months) and turns them into channel-specific video ideas. Use for competitor outliers, niche trends, or deciding what YouTube video to make next.
-version: 1.2.0
+version: 1.2.1
 author: Brandon Chin
 license: MIT
 argument-hint: "[brand-name]"

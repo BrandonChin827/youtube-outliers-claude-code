@@ -124,3 +124,27 @@ class ShortlistCliTests(unittest.TestCase):
                 self.assertIn("breakdowns differ from shortlist", err.getvalue())
             finally:
                 os.environ.pop("CONTENT_HOME", None)
+
+    def test_shortlist_accepts_skeleton_before_title_is_written(self):
+        import contextlib
+        import io
+        import json
+        import os
+        from scripts import outliers
+        with tempfile.TemporaryDirectory() as d:
+            os.environ["CONTENT_HOME"] = d
+            try:
+                out_dir = Path(d) / "b" / "research" / "youtube-outliers"
+                out_dir.mkdir(parents=True)
+                (out_dir / "2026-09-22.json").write_text(json.dumps(PAYLOAD))
+                draft = {**notes.skeleton(PAYLOAD), "relevance": {"c": "high"}}
+                notes_path = Path(d) / "n.json"
+                notes_path.write_text(json.dumps(draft))
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(outliers.main(["shortlist", "b", "--notes", str(notes_path)]), 0)
+                self.assertTrue(buf.getvalue().startswith("1. [high fit · #3]"))
+                with self.assertRaises(ValueError):
+                    notes.load(notes_path)  # publish still needs the title
+            finally:
+                os.environ.pop("CONTENT_HOME", None)

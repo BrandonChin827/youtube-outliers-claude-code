@@ -37,9 +37,11 @@ RELEVANCE = ("high", "medium", "low")
 MAX_PER_CREATOR = 3  # top-5 picks allowed from one channel
 
 
-def load(path):
+def load(path, draft=False):
+    """Read and check notes.json. `draft` (used by shortlist) only checks
+    relevance, since the title, clusters, and breakdowns come later."""
     notes = json.loads(Path(path).read_text())
-    problems = validate(notes)
+    problems = validate_relevance(notes) if draft else validate(notes)
     if problems:
         raise ValueError("notes.json: " + "; ".join(problems))
     return notes
@@ -69,14 +71,17 @@ def validate(notes):
             problems.append(f"breakdowns[{i}].why must be a non-empty list of non-empty strings")
         if not isinstance(b.get("titles", []), list):
             problems.append(f"breakdowns[{i}].titles must be a list")
+    return problems + validate_relevance(notes)
+
+
+def validate_relevance(notes):
+    if not isinstance(notes, dict):
+        return ["top level must be an object"]
     rel = notes.get("relevance", {})
     if not isinstance(rel, dict):
-        problems.append("relevance must be an object of video_id: high|medium|low")
-    else:
-        bad = [k for k, v in rel.items() if str(v or "").lower() not in RELEVANCE + ("",)]
-        if bad:
-            problems.append(f"relevance must be high|medium|low (bad: {', '.join(bad)})")
-    return problems
+        return ["relevance must be an object of video_id: high|medium|low"]
+    bad = [k for k, v in rel.items() if str(v or "").lower() not in RELEVANCE + ("",)]
+    return [f"relevance must be high|medium|low (bad: {', '.join(bad)})"] if bad else []
 
 
 def missing_relevance(notes, candidates):

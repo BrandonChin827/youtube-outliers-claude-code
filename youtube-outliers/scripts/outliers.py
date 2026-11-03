@@ -241,7 +241,7 @@ def main(argv=None):
     if args.cmd == "shortlist":
         payload = load_payload(args.brand, args.date)
         try:
-            notes = notes_mod.load(args.notes)
+            notes = notes_mod.load(args.notes, draft=True)
         except ValueError as e:
             log(str(e))
             return 1

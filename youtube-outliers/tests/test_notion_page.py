@@ -1,3 +1,4 @@
+import re
 import unittest
 
 from scripts.lib import notion_page
@@ -15,11 +16,17 @@ class NotionPageTests(unittest.TestCase):
                                     "### Token limits (3 channels · trend)", "### Everything else",
                                     "## Channel coverage notes", "## Files"])
 
+    def test_single_channel_topic_heading_is_singular(self):
+        one = PAYLOAD["candidates"][0]["id"]
+        md = notion_page.render(PAYLOAD, {**NOTES, "clusters": [{"topic": "Solo", "video_ids": [one]}]})
+        self.assertIn("### Solo (1 channel)", md)
+
     def test_top_table_has_seven_columns_and_colored_verdict(self):
         md = notion_page.render(PAYLOAD, NOTES)
         top = md.split("## All")[0]
         self.assertIn("<td>Titles for your channel</td>", top)
         self.assertEqual(top.count("<col"), 8)  # <colgroup> + 7 <col>
+        self.assertEqual(len(re.findall(r"<col( width=\"\d+\")? />", top)), 7)  # Notion rejects unclosed <col>
         self.assertIn('<span color="green_bg">**Yes**</span>: do it', top)
         self.assertIn("1. T1<br>2. T2<br>3. T3", top)
         self.assertIn("<td>• W</td>", top)
